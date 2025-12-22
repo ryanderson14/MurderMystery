@@ -1,13 +1,18 @@
-from flask import Flask, render_template, redirect, url_for, request, session, jsonify
-import sqlite3
 import os
+import sqlite3
+import time
 from pathlib import Path
+
+from flask import Flask, render_template, redirect, url_for, request, session, jsonify, abort
+from flask_socketio import SocketIO, join_room
 
 APP_DIR = Path(__file__).resolve().parent
 DB_PATH = APP_DIR / "mystery.db"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
+socketio = SocketIO(app, async_mode="eventlet", cors_allowed_origins="*")
+last_accuse_times = {}
 
 # ---------- DB helpers ----------
 def get_db():
@@ -16,10 +21,8 @@ def get_db():
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
-def init_db():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
+def ensure_characters_table(conn):
+    conn.execute("""
     CREATE TABLE IF NOT EXISTS characters (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -31,16 +34,86 @@ def init_db():
         login_code TEXT NOT NULL UNIQUE
     )
     """)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS messages (
+
+def ensure_messages_table(conn):
+    existing = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'").fetchone()
+    if not existing:
+        conn.execute("""
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            sender_id INTEGER,
+            recipient_id INTEGER,
+            body TEXT NOT NULL,
+            is_anonymous INTEGER NOT NULL DEFAULT 0,
+            is_read INTEGER NOT NULL DEFAULT 0,
+            ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(sender_id) REFERENCES characters(id),
+            FOREIGN KEY(recipient_id) REFERENCES characters(id)
+        )
+        """)
+        return
+
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(messages)").fetchall()}
+    required = {"id", "type", "sender_id", "recipient_id", "body", "is_anonymous", "is_read", "ts"}
+    if required.issubset(cols):
+        return
+
+    conn.execute("ALTER TABLE messages RENAME TO messages_old")
+    conn.execute("""
+    CREATE TABLE messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        content TEXT NOT NULL,
-        author_id INTEGER,
+        type TEXT NOT NULL,
+        sender_id INTEGER,
+        recipient_id INTEGER,
+        body TEXT NOT NULL,
         is_anonymous INTEGER NOT NULL DEFAULT 0,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(author_id) REFERENCES characters(id)
+        is_read INTEGER NOT NULL DEFAULT 0,
+        ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(sender_id) REFERENCES characters(id),
+        FOREIGN KEY(recipient_id) REFERENCES characters(id)
     )
     """)
+
+    if "body" in cols:
+        if "is_read" in cols:
+            conn.execute("""
+            INSERT INTO messages (id, type, sender_id, recipient_id, body, is_anonymous, is_read, ts)
+            SELECT id, type, sender_id, recipient_id, body, is_anonymous, is_read, COALESCE(ts, CURRENT_TIMESTAMP)
+            FROM messages_old
+            """)
+        else:
+            conn.execute("""
+            INSERT INTO messages (id, type, sender_id, recipient_id, body, is_anonymous, is_read, ts)
+            SELECT id, type, sender_id, recipient_id, body, is_anonymous, 1, COALESCE(ts, CURRENT_TIMESTAMP)
+            FROM messages_old
+            """)
+    elif "content" in cols:
+        conn.execute("""
+        INSERT INTO messages (id, type, sender_id, recipient_id, body, is_anonymous, is_read, ts)
+        SELECT id, 'public', author_id, NULL, content, is_anonymous, 1, COALESCE(created_at, CURRENT_TIMESTAMP)
+        FROM messages_old
+        """)
+    conn.execute("DROP TABLE messages_old")
+
+def ensure_accusations_table(conn):
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS accusations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        accuser_id INTEGER NOT NULL,
+        accused_id INTEGER NOT NULL,
+        points INTEGER NOT NULL DEFAULT 1,
+        ts DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(accuser_id) REFERENCES characters(id),
+        FOREIGN KEY(accused_id) REFERENCES characters(id)
+    )
+    """)
+
+def init_db():
+    conn = get_db()
+    ensure_characters_table(conn)
+    ensure_messages_table(conn)
+    ensure_accusations_table(conn)
     conn.commit()
     conn.close()
 
@@ -48,6 +121,7 @@ def reset_and_seed():
     conn = get_db()
     cur = conn.cursor()
     cur.execute("DROP TABLE IF EXISTS messages")
+    cur.execute("DROP TABLE IF EXISTS accusations")
     cur.execute("DROP TABLE IF EXISTS characters")
     conn.commit()
     conn.close()
@@ -76,54 +150,7 @@ def reset_and_seed():
     conn.commit()
     conn.close()
 
-# ---------- Routes ----------
-@app.before_first_request
-def ensure_tables():
-    init_db()
-
-@app.route("/")
-def home():
-    return redirect(url_for("tv"))
-
-@app.route("/tv")
-def tv():
-    conn = get_db()
-    chars = conn.execute("SELECT * FROM characters ORDER BY id").fetchall()
-    messages = conn.execute("""
-        SELECT m.*, c.name AS author_name, c.avatar_emoji
-        FROM messages m
-        LEFT JOIN characters c ON m.author_id = c.id
-        ORDER BY m.created_at DESC
-        LIMIT 50
-    """).fetchall()
-    conn.close()
-    return render_template("tv.html", characters=chars, messages=messages)
-
-@app.route("/api/messages")
-def api_messages():
-    conn = get_db()
-    messages = conn.execute("""
-        SELECT m.*, c.name AS author_name, c.avatar_emoji
-        FROM messages m
-        LEFT JOIN characters c ON m.author_id = c.id
-        ORDER BY m.created_at DESC
-        LIMIT 50
-    """).fetchall()
-    conn.close()
-    data = []
-    for m in messages:
-        author = "Anonymous" if m["is_anonymous"] else (m["author_name"] or "Unknown")
-        avatar = "" if m["is_anonymous"] else (m["avatar_emoji"] or "")
-        data.append({
-            "id": m["id"],
-            "content": m["content"],
-            "created_at": m["created_at"],
-            "author": author,
-            "avatar": avatar,
-            "is_anonymous": bool(m["is_anonymous"]),
-        })
-    return jsonify(data)
-
+# ---------- Helpers ----------
 def get_logged_in_character():
     char_id = session.get("character_id")
     if not char_id:
@@ -135,20 +162,211 @@ def get_logged_in_character():
         session.pop("character_id", None)
     return char
 
+def fetch_public_messages(limit=50):
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT m.*, c.name AS sender_name, c.avatar_emoji
+        FROM messages m
+        LEFT JOIN characters c ON m.sender_id = c.id
+        WHERE m.type = 'public'
+        ORDER BY m.ts DESC
+        LIMIT ?
+    """, (limit,)).fetchall()
+    conn.close()
+    return rows
+
+def serialize_public_message(row):
+    author = "Anonymous" if row["is_anonymous"] else (row["sender_name"] or "Unknown")
+    avatar = "" if row["is_anonymous"] else (row["avatar_emoji"] or "")
+    return {
+        "id": row["id"],
+        "body": row["body"],
+        "ts": row["ts"],
+        "author": author,
+        "avatar": avatar,
+        "is_anonymous": bool(row["is_anonymous"]),
+    }
+
+def build_dm_threads(conn, user_id, characters):
+    threads = []
+    for c in characters:
+        if c["id"] == user_id:
+            continue
+        last = conn.execute("""
+            SELECT id, body, ts, sender_id
+            FROM messages
+            WHERE type = 'dm' AND (
+                (sender_id = ? AND recipient_id = ?) OR
+                (sender_id = ? AND recipient_id = ?)
+            )
+            ORDER BY ts DESC, id DESC
+            LIMIT 1
+        """, (user_id, c["id"], c["id"], user_id)).fetchone()
+        unread = conn.execute("""
+            SELECT COUNT(*) AS cnt
+            FROM messages
+            WHERE type = 'dm' AND sender_id = ? AND recipient_id = ? AND is_read = 0
+        """, (c["id"], user_id)).fetchone()["cnt"]
+
+        threads.append({
+            "other_id": c["id"],
+            "name": c["name"],
+            "avatar_emoji": c["avatar_emoji"],
+            "role_tag": c["role_tag"],
+            "last_id": last["id"] if last else None,
+            "last_body": last["body"] if last else None,
+            "last_ts": last["ts"] if last else None,
+            "last_sender_id": last["sender_id"] if last else None,
+            "unread_count": unread,
+        })
+
+    threads.sort(key=lambda t: t["last_ts"] or "", reverse=True)
+    return threads
+
+def fetch_thread_messages(user_id, other_id):
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT m.*, s.name AS sender_name, s.avatar_emoji AS sender_avatar
+        FROM messages m
+        LEFT JOIN characters s ON m.sender_id = s.id
+        WHERE m.type = 'dm' AND (
+            (m.sender_id = ? AND m.recipient_id = ?) OR
+            (m.sender_id = ? AND m.recipient_id = ?)
+        )
+        ORDER BY m.ts ASC, m.id ASC
+    """, (user_id, other_id, other_id, user_id)).fetchall()
+    conn.close()
+    return rows
+
+def mark_thread_read(user_id, other_id):
+    conn = get_db()
+    conn.execute("""
+        UPDATE messages
+        SET is_read = 1
+        WHERE type = 'dm' AND recipient_id = ? AND sender_id = ? AND is_read = 0
+    """, (user_id, other_id))
+    conn.commit()
+    conn.close()
+
+# ---------- Routes ----------
+_db_initialized = False
+
+@app.before_request
+def ensure_tables():
+    global _db_initialized
+    if not _db_initialized:
+        init_db()
+        _db_initialized = True
+
+
+@app.route("/")
+def home():
+    return redirect(url_for("tv"))
+
+@app.route("/tv")
+def tv():
+    conn = get_db()
+    chars = conn.execute("SELECT * FROM characters ORDER BY id").fetchall()
+    conn.close()
+    messages = fetch_public_messages()
+    return render_template("tv.html", characters=chars, messages=messages)
+
+@app.route("/api/messages")
+def api_messages():
+    messages = fetch_public_messages()
+    data = [serialize_public_message(m) for m in messages]
+    return jsonify(data)
+
+@app.route("/api/thread/<int:other_id>")
+def api_thread(other_id):
+    character = get_logged_in_character()
+    if not character:
+        abort(401)
+    if other_id == character["id"]:
+        abort(400)
+    mark_thread_read(character["id"], other_id)
+    rows = fetch_thread_messages(character["id"], other_id)
+    data = []
+    for r in rows:
+        data.append({
+            "id": r["id"],
+            "body": r["body"],
+            "ts": r["ts"],
+            "sender_id": r["sender_id"],
+            "sender_name": r["sender_name"],
+            "sender_avatar": r["sender_avatar"],
+        })
+    return jsonify(data)
+
+@app.route("/api/thread/<int:other_id>/read", methods=["POST"])
+def api_thread_read(other_id):
+    character = get_logged_in_character()
+    if not character:
+        abort(401)
+    if other_id == character["id"]:
+        abort(400)
+    mark_thread_read(character["id"], other_id)
+    return jsonify({"ok": True})
+
 @app.route("/app")
 def player_app():
     character = get_logged_in_character()
     conn = get_db()
-    messages = conn.execute("""
-        SELECT m.*, c.name AS author_name, c.avatar_emoji
-        FROM messages m
-        LEFT JOIN characters c ON m.author_id = c.id
-        ORDER BY m.created_at DESC
-        LIMIT 50
-    """).fetchall()
+    characters = conn.execute("SELECT * FROM characters ORDER BY id").fetchall()
+    dm_threads = []
+    if character:
+        dm_threads = build_dm_threads(conn, character["id"], characters)
     conn.close()
+    public_messages = fetch_public_messages()
+    selected_dm = request.args.get("dm", type=int)
     error = request.args.get("error")
-    return render_template("app.html", character=character, messages=messages, error=error)
+    tab = request.args.get("tab") or "feed"
+
+    if character and selected_dm is None:
+        if dm_threads:
+            selected_dm = dm_threads[0]["other_id"]
+        else:
+            for c in characters:
+                if c["id"] != character["id"]:
+                    selected_dm = c["id"]
+                    break
+
+    thread_messages = []
+    if character and selected_dm and tab == "dm":
+        mark_thread_read(character["id"], selected_dm)
+        thread_messages = fetch_thread_messages(character["id"], selected_dm)
+        for thread in dm_threads:
+            if thread["other_id"] == selected_dm:
+                thread["unread_count"] = 0
+                break
+    dm_unread_total = sum(t["unread_count"] for t in dm_threads) if character else 0
+
+    selected_dm_name = None
+    selected_dm_role = None
+    selected_dm_avatar = None
+    if character and selected_dm:
+        for c in characters:
+            if c["id"] == selected_dm:
+                selected_dm_name = c["name"]
+                selected_dm_role = c["role_tag"]
+                selected_dm_avatar = c["avatar_emoji"]
+                break
+
+    return render_template(
+        "app.html",
+        character=character,
+        characters=characters,
+        messages=public_messages,
+        error=error,
+        selected_dm=selected_dm,
+        thread_messages=thread_messages,
+        tab=tab,
+        dm_threads=dm_threads,
+        dm_unread_total=dm_unread_total,
+        selected_dm_name=selected_dm_name,
+        selected_dm_role=selected_dm_role,
+        selected_dm_avatar=selected_dm_avatar,
+    )
 
 @app.route("/app/login", methods=["POST"])
 def app_login():
@@ -188,13 +406,111 @@ def app_post():
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO messages (content, author_id, is_anonymous)
-        VALUES (?, ?, ?)
-    """, (content, character["id"], is_anonymous))
+        INSERT INTO messages (type, sender_id, recipient_id, body, is_anonymous, is_read)
+        VALUES ('public', ?, NULL, ?, ?, 1)
+    """, (character["id"], content, is_anonymous))
+    new_id = cur.lastrowid
+    conn.commit()
+    row = conn.execute("""
+        SELECT m.*, c.name AS sender_name, c.avatar_emoji
+        FROM messages m
+        LEFT JOIN characters c ON m.sender_id = c.id
+        WHERE m.id = ?
+    """, (new_id,)).fetchone()
+    conn.close()
+
+    payload = serialize_public_message(row)
+    socketio.emit("public_message", payload)
+
+    return redirect(url_for("player_app"))
+
+@app.route("/app/dm", methods=["POST"])
+def app_dm():
+    character = get_logged_in_character()
+    if not character:
+        return redirect(url_for("player_app", error="Log in first."))
+
+    recipient_id = request.form.get("recipient_id", type=int)
+    body = (request.form.get("body") or "").strip()
+
+    if not recipient_id:
+        return redirect(url_for("player_app", error="Choose someone to DM.", tab="dm"))
+    if recipient_id == character["id"]:
+        return redirect(url_for("player_app", error="You cannot DM yourself.", dm=recipient_id, tab="dm"))
+    if not body:
+        return redirect(url_for("player_app", error="Message cannot be empty.", dm=recipient_id, tab="dm"))
+    if len(body) > 280:
+        body = body[:280]
+
+    conn = get_db()
+    target = conn.execute("SELECT id FROM characters WHERE id = ?", (recipient_id,)).fetchone()
+    if not target:
+        conn.close()
+        return redirect(url_for("player_app", error="Recipient not found.", tab="dm"))
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO messages (type, sender_id, recipient_id, body, is_anonymous, is_read)
+        VALUES ('dm', ?, ?, ?, 0, 0)
+    """, (character["id"], recipient_id, body))
+    new_id = cur.lastrowid
+    conn.commit()
+    row = conn.execute("""
+        SELECT m.*, s.name AS sender_name, s.avatar_emoji AS sender_avatar
+        FROM messages m
+        LEFT JOIN characters s ON m.sender_id = s.id
+        WHERE m.id = ?
+    """, (new_id,)).fetchone()
+    conn.close()
+
+    payload = {
+        "id": row["id"],
+        "body": row["body"],
+        "ts": row["ts"],
+        "sender_id": row["sender_id"],
+        "sender_name": row["sender_name"],
+        "sender_avatar": row["sender_avatar"],
+        "recipient_id": recipient_id,
+    }
+    room_sender = f"char-{character['id']}"
+    room_recipient = f"char-{recipient_id}"
+    socketio.emit("dm", payload, room=room_sender)
+    if room_recipient != room_sender:
+        socketio.emit("dm", payload, room=room_recipient)
+
+    return redirect(url_for("player_app", dm=recipient_id, tab="dm"))
+
+@app.route("/app/accuse", methods=["POST"])
+def app_accuse():
+    character = get_logged_in_character()
+    if not character:
+        return redirect(url_for("player_app", error="Log in first."))
+
+    accused_id = request.form.get("accused_id", type=int)
+    if not accused_id:
+        return redirect(url_for("player_app", error="Pick someone to accuse.", tab="suspect"))
+    if accused_id == character["id"]:
+        return redirect(url_for("player_app", error="You cannot accuse yourself.", tab="suspect"))
+
+    now = time.time()
+    last = last_accuse_times.get(character["id"], 0)
+    if now - last < 10:
+        return redirect(url_for("player_app", error="Slow down—wait a few seconds before accusing again.", tab="suspect"))
+    last_accuse_times[character["id"]] = now
+
+    conn = get_db()
+    exists = conn.execute("SELECT id FROM characters WHERE id = ?", (accused_id,)).fetchone()
+    if not exists:
+        conn.close()
+        return redirect(url_for("player_app", error="That character doesn't exist.", tab="suspect"))
+    cur = conn.cursor()
+    cur.execute("INSERT INTO accusations (accuser_id, accused_id, points) VALUES (?, ?, 1)", (character["id"], accused_id))
+    cur.execute("UPDATE characters SET suspect_score = suspect_score + 1 WHERE id = ?", (accused_id,))
+    new_score = conn.execute("SELECT suspect_score FROM characters WHERE id = ?", (accused_id,)).fetchone()["suspect_score"]
     conn.commit()
     conn.close()
 
-    return redirect(url_for("player_app"))
+    socketio.emit("suspect_update", {"character_id": accused_id, "suspect_score": new_score})
+    return redirect(url_for("player_app", tab="suspect"))
 
 @app.route("/gm")
 def gm():
@@ -203,9 +519,33 @@ def gm():
 @app.route("/gm/seed")
 def gm_seed():
     reset_and_seed()
+    last_accuse_times.clear()
+    conn = get_db()
+    scores = conn.execute("SELECT id, suspect_score FROM characters").fetchall()
+    conn.close()
+    for row in scores:
+        socketio.emit("suspect_update", {"character_id": row["id"], "suspect_score": row["suspect_score"]})
+    socketio.emit("public_cleared")
     return redirect(url_for("tv"))
+
+@app.route("/gm/clear_public")
+def gm_clear_public():
+    conn = get_db()
+    conn.execute("DELETE FROM messages WHERE type = 'public'")
+    conn.commit()
+    conn.close()
+    socketio.emit("public_cleared")
+    return redirect(url_for("gm"))
+
+# ---------- Socket.IO ----------
+@socketio.on("join")
+def socket_join(data):
+    char_id = data.get("character_id")
+    if not char_id:
+        return
+    room = f"char-{char_id}"
+    join_room(room)
 
 if __name__ == "__main__":
     init_db()
-    # Host on LAN so phones + TV can reach it
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    socketio.run(app, host="0.0.0.0", port=5001, debug=True)

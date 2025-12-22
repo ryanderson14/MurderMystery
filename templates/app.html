@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>80s Prom Mystery — Player App</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js" crossorigin="anonymous"></script>
 </head>
 <body class="app">
   <header class="topbar app-top">
     <div>
       <div class="title">🪩 80s Prom Mystery</div>
-      <div class="subtitle">Public Message Feed</div>
+      <div class="subtitle">Public Feed, DMs, and Suspect points</div>
     </div>
     {% if character %}
       <div class="user-chip">
@@ -24,7 +25,7 @@
     {% endif %}
   </header>
 
-  <main class="app-shell">
+  <main class="app-shell" data-active-tab="{{ tab or 'feed' }}">
     {% if error %}
       <div class="alert">{{ error }}</div>
     {% endif %}
@@ -38,8 +39,19 @@
           <button class="btn primary" type="submit">Log In</button>
         </form>
       </section>
-    {% else %}
-      <section class="panel">
+    {% endif %}
+
+    <div class="tab-row">
+      <button class="tab-btn {% if (tab or 'feed') == 'feed' %}active{% endif %}" data-tab="feed">Public</button>
+      <button class="tab-btn {% if (tab or 'feed') == 'dm' %}active{% endif %}" data-tab="dm" {% if not character %}disabled{% endif %}>
+        DMs
+        <span class="dm-badge {% if dm_unread_total == 0 %}hidden{% endif %}" id="dm-badge" data-count="{{ dm_unread_total }}">{{ dm_unread_total }}</span>
+      </button>
+      <button class="tab-btn {% if (tab or 'feed') == 'suspect' %}active{% endif %}" data-tab="suspect" {% if not character %}disabled{% endif %}>Suspect</button>
+    </div>
+
+    <section class="panel tab-panel {% if (tab or 'feed') == 'feed' %}active{% endif %}" data-tab="feed">
+      {% if character %}
         <div class="panel-title">Post to Public</div>
         <form class="post-form" action="{{ url_for('app_post') }}" method="post">
           <textarea name="content" rows="3" placeholder="Share a clue, alibi, or rumor…" maxlength="280" required></textarea>
@@ -54,10 +66,9 @@
             </div>
           </div>
         </form>
-      </section>
-    {% endif %}
-
-    <section class="panel">
+      {% else %}
+        <p class="muted">Log in to post. Feed is read-only right now.</p>
+      {% endif %}
       <div class="panel-head">
         <div>
           <div class="panel-title">Public Feed</div>
@@ -74,52 +85,231 @@
               </div>
               <div>
                 <div class="message-author">
-                  {% if m.is_anonymous %}Anonymous{% else %}{{ m.author_name or "Unknown" }}{% endif %}
+                  {% if m.is_anonymous %}Anonymous{% else %}{{ m.sender_name or "Unknown" }}{% endif %}
                 </div>
-                <div class="message-time">{{ m.created_at }}</div>
+                <div class="message-time">{{ m.ts }}</div>
               </div>
             </div>
-            <div class="message-content">{{ m.content }}</div>
+            <div class="message-content">{{ m.body }}</div>
           </article>
         {% else %}
           <div class="muted">No messages yet. Be the first to post.</div>
         {% endfor %}
       </div>
     </section>
+
+    <section class="panel tab-panel {% if (tab or 'feed') == 'dm' %}active{% endif %}" data-tab="dm">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Direct Messages</div>
+          <div class="panel-subtitle">Private between two characters</div>
+        </div>
+        <div class="pill live">LIVE</div>
+      </div>
+      {% if not character %}
+        <p class="muted">Log in to DM someone.</p>
+      {% else %}
+        <div class="dm-shell" id="dm-shell">
+          <div class="dm-list" id="dm-list">
+            {% for thread in dm_threads %}
+              <button
+                class="dm-row-item {% if thread.unread_count %}unread{% endif %} {% if selected_dm == thread.other_id %}active{% endif %}"
+                type="button"
+                data-other-id="{{ thread.other_id }}"
+                data-last-ts="{{ thread.last_ts or '' }}"
+                data-unread="{{ thread.unread_count }}"
+                data-name="{{ thread.name }}"
+                data-role="{{ thread.role_tag }}"
+                data-avatar="{{ thread.avatar_emoji }}"
+              >
+                <div class="avatar small">{{ thread.avatar_emoji }}</div>
+                <div class="dm-row-main">
+                  <div class="dm-row-top">
+                    <div class="dm-row-name">{{ thread.name }}</div>
+                    <div class="dm-row-time">{{ thread.last_ts or '' }}</div>
+                  </div>
+                  <div class="dm-row-preview">
+                    {% if thread.last_body %}
+                      {% if thread.last_sender_id == character.id %}You: {% endif %}{{ thread.last_body }}
+                    {% else %}
+                      <span class="dm-row-empty">No messages yet</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="dm-row-badge {% if not thread.unread_count %}hidden{% endif %}">{{ thread.unread_count }}</div>
+              </button>
+            {% endfor %}
+          </div>
+
+          <div class="dm-chat" id="dm-chat">
+            <div class="dm-chat-head">
+              <button class="btn ghost small dm-back" id="dm-back" type="button">Back</button>
+              <div class="dm-chat-title">
+                <div class="dm-chat-name" id="dm-chat-name">{{ selected_dm_name or "Select a DM" }}</div>
+                <div class="dm-chat-role" id="dm-chat-role">{{ selected_dm_role or "" }}</div>
+              </div>
+              <div class="avatar small dm-chat-avatar" id="dm-chat-avatar">{{ selected_dm_avatar or "🪩" }}</div>
+            </div>
+            <div class="dm-thread" id="dm-thread">
+              {% if selected_dm and (tab or 'feed') == 'dm' %}
+                {% for m in thread_messages %}
+                  <div class="dm-row {% if m.sender_id == character.id %}outgoing{% else %}incoming{% endif %}">
+                    <div class="dm-message">
+                      <div class="avatar tiny">{{ m.sender_avatar or "🪩" }}</div>
+                      <div class="dm-bubble">{{ m.body }}</div>
+                    </div>
+                  </div>
+                {% else %}
+                  <div class="muted">No DMs yet. Say hi.</div>
+                {% endfor %}
+              {% else %}
+                <div class="muted">Pick a conversation to start.</div>
+              {% endif %}
+            </div>
+            <form class="dm-form" action="{{ url_for('app_dm') }}" method="post">
+              <input type="hidden" name="recipient_id" id="dm-recipient-input" value="{{ selected_dm or '' }}">
+              <textarea name="body" rows="3" placeholder="Type a private message…" maxlength="280" required></textarea>
+              <div class="actions">
+                <button class="btn" type="button" onclick="document.querySelector('.dm-form textarea').value=''">Clear</button>
+                <button class="btn primary" type="submit">Send DM</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="panel tab-panel {% if (tab or 'feed') == 'suspect' %}active{% endif %}" data-tab="suspect">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Suspect Board</div>
+          <div class="panel-subtitle">Accuse someone (+1 point)</div>
+        </div>
+        <div class="pill live">LIVE</div>
+      </div>
+      {% if not character %}
+        <p class="muted">Log in to accuse suspects.</p>
+      {% else %}
+        <div class="suspect-grid app-suspect">
+          {% for c in characters %}
+            <div class="suspect-card">
+              <div class="avatar small">{{ c.avatar_emoji }}</div>
+              <div class="suspect-copy">
+                <div class="name">{{ c.name }}</div>
+                <div class="muted">{{ c.role_tag }}</div>
+              </div>
+              <div class="suspect-score" data-char-id="{{ c.id }}">{{ c.suspect_score }}</div>
+              {% if c.id == character.id %}
+                <button class="btn small" disabled>It's you</button>
+              {% else %}
+                <form action="{{ url_for('app_accuse') }}" method="post">
+                  <input type="hidden" name="accused_id" value="{{ c.id }}">
+                  <button class="btn primary small" type="submit">Accuse +1</button>
+                </form>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </section>
   </main>
 
   <script>
-    const appFeedEl = document.getElementById("app-feed");
-    const apiUrl = "{{ url_for('api_messages') }}";
+    const appShell = document.querySelector(".app-shell");
+    const tabButtons = document.querySelectorAll(".tab-btn");
+    const panels = document.querySelectorAll(".tab-panel");
+    let activeTab = appShell?.dataset.activeTab || "feed";
+    const meId = {{ character.id if character else "null" }};
+    let currentDm = {{ selected_dm if selected_dm else "null" }};
+    const feedEl = document.getElementById("app-feed");
+    const feedApi = "{{ url_for('api_messages') }}";
+    const dmRecipientInput = document.getElementById("dm-recipient-input");
+    const dmThreadEl = document.getElementById("dm-thread");
+    const dmBadge = document.getElementById("dm-badge");
+    const dmListEl = document.getElementById("dm-list");
+    const dmShell = document.getElementById("dm-shell");
+    const dmBack = document.getElementById("dm-back");
+    const dmChatName = document.getElementById("dm-chat-name");
+    const dmChatRole = document.getElementById("dm-chat-role");
+    const dmChatAvatar = document.getElementById("dm-chat-avatar");
+    let totalUnread = parseInt(dmBadge?.dataset.count || "0", 10);
+
+    if (activeTab !== "feed") {
+      const btn = document.querySelector(`.tab-btn[data-tab="${activeTab}"]`);
+      if (btn && btn.disabled) {
+        activeTab = "feed";
+      }
+    }
+
+    if (!currentDm && dmListEl) {
+      const firstRow = dmListEl.querySelector(".dm-row-item");
+      if (firstRow) {
+        currentDm = parseInt(firstRow.dataset.otherId, 10) || null;
+      }
+    }
+    if (dmRecipientInput) dmRecipientInput.value = currentDm || "";
+
+    function setTab(tab) {
+      activeTab = tab;
+      tabButtons.forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.tab === tab);
+      });
+      panels.forEach(panel => {
+        panel.classList.toggle("active", panel.dataset.tab === tab);
+      });
+      if (tab !== "dm" && dmShell) {
+        dmShell.classList.remove("chat-active");
+      }
+      if (tab === "dm" && currentDm && dmListEl) {
+        selectDmThread(currentDm, true);
+      }
+    }
+    setTab(activeTab);
+    tabButtons.forEach(btn => {
+      btn.addEventListener("click", () => {
+        if (btn.disabled) return;
+        setTab(btn.dataset.tab);
+      });
+    });
 
     function renderFeed(data) {
-      if (!appFeedEl) return;
-      appFeedEl.innerHTML = "";
+      if (!feedEl) return;
+      feedEl.innerHTML = "";
       if (!data.length) {
-        appFeedEl.innerHTML = "<div class='muted'>No messages yet.</div>";
+        feedEl.innerHTML = "<div class='muted'>No messages yet.</div>";
         return;
       }
-      data.forEach(msg => {
-        const item = document.createElement("article");
-        item.className = "message-card";
-        item.innerHTML = `
-          <div class="message-meta">
-            <div class="avatar small">${msg.is_anonymous ? "👤" : (msg.avatar || "🪩")}</div>
-            <div>
-              <div class="message-author">${msg.is_anonymous ? "Anonymous" : msg.author}</div>
-              <div class="message-time">${msg.created_at}</div>
-            </div>
+      data.forEach(msg => addFeedMessage(msg, false));
+    }
+
+    function addFeedMessage(msg, prepend = true) {
+      if (!feedEl) return;
+      const item = document.createElement("article");
+      item.className = "message-card";
+      item.innerHTML = `
+        <div class="message-meta">
+          <div class="avatar small">${msg.is_anonymous ? "👤" : (msg.avatar || "🪩")}</div>
+          <div>
+            <div class="message-author">${msg.is_anonymous ? "Anonymous" : msg.author}</div>
+            <div class="message-time">${msg.ts}</div>
           </div>
-          <div class="message-content"></div>
-        `;
-        item.querySelector(".message-content").textContent = msg.content;
-        appFeedEl.appendChild(item);
-      });
+        </div>
+        <div class="message-content"></div>
+      `;
+      item.querySelector(".message-content").textContent = msg.body;
+      if (prepend) {
+        feedEl.prepend(item);
+      } else {
+        feedEl.appendChild(item);
+      }
+      while (feedEl.children.length > 50) {
+        feedEl.removeChild(feedEl.lastChild);
+      }
     }
 
     async function refreshFeed() {
       try {
-        const res = await fetch(apiUrl);
+        const res = await fetch(feedApi);
         if (!res.ok) return;
         const data = await res.json();
         renderFeed(data);
@@ -128,8 +318,191 @@
       }
     }
 
+    function renderThread(messages) {
+      if (!dmThreadEl) return;
+      dmThreadEl.innerHTML = "";
+      if (!messages.length) {
+        dmThreadEl.innerHTML = "<div class='muted'>No DMs yet. Say hi.</div>";
+        return;
+      }
+      messages.forEach(m => appendDmMessage(m));
+      dmThreadEl.scrollTop = dmThreadEl.scrollHeight;
+    }
+
+    function appendDmMessage(msg) {
+      if (!dmThreadEl) return;
+      const row = document.createElement("div");
+      row.className = "dm-row " + (msg.sender_id === meId ? "outgoing" : "incoming");
+      row.innerHTML = `
+        <div class="dm-message">
+          <div class="avatar tiny">${msg.sender_avatar || "🪩"}</div>
+          <div class="dm-bubble"></div>
+        </div>
+      `;
+      row.querySelector(".dm-bubble").textContent = msg.body;
+      dmThreadEl.appendChild(row);
+    }
+
+    async function loadThread(recipientId) {
+      if (!recipientId || !meId) return;
+      try {
+        const res = await fetch(`/api/thread/${recipientId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        renderThread(data);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function markThreadRead(recipientId) {
+      if (!recipientId || !meId) return;
+      try {
+        await fetch(`/api/thread/${recipientId}/read`, { method: "POST" });
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    function updateBadge(count) {
+      if (!dmBadge) return;
+      dmBadge.dataset.count = count;
+      dmBadge.textContent = count;
+      dmBadge.classList.toggle("hidden", count <= 0);
+    }
+
+    function recalcUnread() {
+      if (!dmListEl) return;
+      const total = Array.from(dmListEl.querySelectorAll(".dm-row-item"))
+        .reduce((sum, row) => sum + parseInt(row.dataset.unread || "0", 10), 0);
+      totalUnread = total;
+      updateBadge(totalUnread);
+    }
+
+    function sortDmList() {
+      if (!dmListEl) return;
+      const rows = Array.from(dmListEl.querySelectorAll(".dm-row-item"));
+      rows.sort((a, b) => {
+        const aTs = a.dataset.lastTs || "";
+        const bTs = b.dataset.lastTs || "";
+        if (aTs === bTs) return 0;
+        return aTs < bTs ? 1 : -1;
+      });
+      rows.forEach(row => dmListEl.appendChild(row));
+    }
+
+    function setChatHeader(row) {
+      if (!row) return;
+      if (dmChatName) dmChatName.textContent = row.dataset.name || "Direct Message";
+      if (dmChatRole) dmChatRole.textContent = row.dataset.role || "";
+      if (dmChatAvatar) dmChatAvatar.textContent = row.dataset.avatar || "🪩";
+    }
+
+    function selectDmThread(otherId, openChat = false) {
+      if (!dmListEl) return;
+      const row = dmListEl.querySelector(`[data-other-id="${otherId}"]`);
+      if (!row) return;
+      currentDm = otherId;
+      if (dmRecipientInput) dmRecipientInput.value = currentDm || "";
+      dmListEl.querySelectorAll(".dm-row-item").forEach(item => {
+        item.classList.toggle("active", item === row);
+      });
+      setChatHeader(row);
+      if (openChat && dmShell) dmShell.classList.add("chat-active");
+
+      const unreadCount = parseInt(row.dataset.unread || "0", 10);
+      if (unreadCount > 0) {
+        row.dataset.unread = "0";
+        row.classList.remove("unread");
+        const badge = row.querySelector(".dm-row-badge");
+        if (badge) {
+          badge.textContent = "0";
+          badge.classList.add("hidden");
+        }
+        recalcUnread();
+      }
+      loadThread(currentDm);
+    }
+
+    function updateDmRowFromMessage(msg, incrementUnread) {
+      if (!dmListEl) return;
+      const otherId = msg.sender_id === meId ? msg.recipient_id : msg.sender_id;
+      const row = dmListEl.querySelector(`[data-other-id="${otherId}"]`);
+      if (!row) return;
+      row.dataset.lastTs = msg.ts || "";
+      const timeEl = row.querySelector(".dm-row-time");
+      const previewEl = row.querySelector(".dm-row-preview");
+      if (timeEl) timeEl.textContent = msg.ts || "";
+      if (previewEl) {
+        const prefix = msg.sender_id === meId ? "You: " : "";
+        previewEl.textContent = `${prefix}${msg.body}`;
+      }
+      if (incrementUnread) {
+        const unread = parseInt(row.dataset.unread || "0", 10) + 1;
+        row.dataset.unread = unread;
+        row.classList.add("unread");
+        const badge = row.querySelector(".dm-row-badge");
+        if (badge) {
+          badge.textContent = unread;
+          badge.classList.remove("hidden");
+        }
+        recalcUnread();
+      }
+      sortDmList();
+    }
+
+    if (dmListEl) {
+      dmListEl.addEventListener("click", (event) => {
+        const row = event.target.closest(".dm-row-item");
+        if (!row) return;
+        selectDmThread(parseInt(row.dataset.otherId, 10), true);
+      });
+    }
+
+    if (dmBack && dmShell) {
+      dmBack.addEventListener("click", () => {
+        dmShell.classList.remove("chat-active");
+      });
+    }
+
+    const socket = io();
+    socket.on("connect", () => {
+      if (meId) {
+        socket.emit("join", { character_id: meId });
+      }
+    });
+    socket.on("public_message", (msg) => addFeedMessage(msg));
+    socket.on("public_cleared", () => refreshFeed());
+    socket.on("dm", (msg) => {
+      if (!meId) return;
+      if (msg.sender_id !== meId && msg.recipient_id !== meId) return;
+      const otherId = msg.sender_id === meId ? msg.recipient_id : msg.sender_id;
+      const isIncoming = msg.sender_id !== meId;
+      const isActiveThread = activeTab === "dm" && currentDm === otherId && dmShell?.classList.contains("chat-active");
+
+      updateDmRowFromMessage(msg, isIncoming && !isActiveThread);
+
+      if (currentDm && otherId === currentDm) {
+        if (dmThreadEl && dmThreadEl.innerHTML.includes("Pick a conversation")) {
+          dmThreadEl.innerHTML = "";
+        }
+        if (dmThreadEl && dmThreadEl.innerHTML.includes("No DMs yet")) {
+          dmThreadEl.innerHTML = "";
+        }
+        appendDmMessage(msg);
+        dmThreadEl.scrollTop = dmThreadEl.scrollHeight;
+        if (isIncoming && isActiveThread) {
+          markThreadRead(otherId);
+        }
+      }
+    });
+    socket.on("suspect_update", (data) => {
+      const els = document.querySelectorAll(`[data-char-id="${data.character_id}"]`);
+      els.forEach(el => el.textContent = data.suspect_score);
+    });
+
     refreshFeed();
-    setInterval(refreshFeed, 4000);
+    setInterval(refreshFeed, 15000);
   </script>
 </body>
 </html>

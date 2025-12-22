@@ -167,6 +167,9 @@ body {
   font-size: 18px;
   border-radius: 10px;
   background: rgba(255,255,255,0.08);
+  line-height: 1;
+  overflow: hidden;
+  flex-shrink: 0;
 }
 .message-author { font-weight: 700; }
 .message-time { color: var(--muted); font-size: 12px; }
@@ -183,6 +186,20 @@ body {
   flex-direction: column;
   gap: 12px;
 }
+.tab-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.tab-btn {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(0,0,0,0.25);
+  color: var(--text);
+  cursor: pointer;
+}
+.tab-btn.active { background: linear-gradient(90deg, rgba(255,0,180,0.25), rgba(0,200,255,0.2)); border-color: rgba(255,255,255,0.2); }
+.tab-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
 .user-chip {
   display: flex;
   align-items: center;
@@ -204,8 +221,8 @@ body {
   color: #ffc8c8;
 }
 
-.login-form, .post-form { display: flex; flex-direction: column; gap: 10px; }
-.login-form input, .post-form textarea {
+.login-form, .post-form, .dm-form { display: flex; flex-direction: column; gap: 10px; }
+.login-form input, .post-form textarea, .dm-form textarea {
   width: 100%;
   padding: 12px;
   border-radius: 12px;
@@ -214,7 +231,7 @@ body {
   color: var(--text);
   font-size: 16px;
 }
-.post-form textarea { resize: vertical; min-height: 90px; }
+.post-form textarea, .dm-form textarea { resize: vertical; min-height: 90px; }
 .form-row {
   display: flex;
   align-items: center;
@@ -228,6 +245,190 @@ body {
 .btn.primary { background: linear-gradient(90deg, rgba(255,0,180,0.65), rgba(0,200,255,0.5)); border-color: transparent; }
 .login-form .btn, .post-form .btn { margin-top: 0; }
 .actions .btn { margin-top: 0; }
+.btn.small { padding: 6px 10px; font-size: 13px; }
+.btn.ghost {
+  background: transparent;
+  border-color: rgba(255,255,255,0.18);
+}
+.hidden { display: none; }
+
+.dm-badge {
+  margin-left: 6px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #ff3b3b;
+  color: #fff;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 10px rgba(255,59,59,0.5);
+}
+
+.dm-shell {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) 1fr;
+  gap: 12px;
+}
+.dm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.dm-row-item {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(0,0,0,0.22);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+  width: 100%;
+  font: inherit;
+}
+.dm-row-item:hover { border-color: rgba(255,255,255,0.25); }
+.dm-row-item.active { box-shadow: 0 0 0 1px rgba(0,200,255,0.4); }
+.dm-row-item.unread {
+  border-color: rgba(255,255,255,0.28);
+  background: rgba(255,255,255,0.06);
+  box-shadow: 0 0 0 1px rgba(0,200,255,0.18);
+}
+.dm-row-main { display: flex; flex-direction: column; gap: 4px; }
+.dm-row-top { display: flex; justify-content: space-between; gap: 8px; }
+.dm-row-name { font-weight: 700; }
+.dm-row-time { color: var(--muted); font-size: 11px; }
+.dm-row-preview {
+  color: var(--muted);
+  font-size: 13px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.dm-row-item.unread .dm-row-preview { color: var(--text); }
+.dm-row-empty { color: var(--muted); }
+.dm-row-badge {
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #ff3b3b;
+  color: #fff;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.dm-badge.hidden,
+.dm-row-badge.hidden {
+  display: none;
+}
+
+.dm-chat {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(0,0,0,0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dm-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dm-chat-title { flex: 1; }
+.dm-chat-name { font-weight: 700; }
+.dm-chat-role { color: var(--muted); font-size: 12px; }
+.dm-chat-avatar { justify-self: end; }
+.dm-back { display: none; }
+
+.dm-thread {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(0,0,0,0.2);
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+.dm-form { margin-top: 4px; }
+.dm-row { display: flex; }
+.dm-row.outgoing { justify-content: flex-end; }
+.dm-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 85%;
+}
+.dm-bubble {
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(0,0,0,0.2));
+  padding: 8px 10px;
+  border-radius: 12px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.avatar.tiny {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: rgba(255,255,255,0.1);
+  font-size: 18px;
+  line-height: 1;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.suspect-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+.suspect-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(0,0,0,0.25);
+}
+.suspect-copy .name { font-weight: 700; }
+.suspect-score { font-weight: 800; }
+.app-suspect .btn { justify-self: end; }
+
+.divider {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 14px 0;
+}
+
+@media (max-width: 900px) {
+  .dm-shell { grid-template-columns: 1fr; }
+  .dm-shell .dm-chat { display: none; }
+  .dm-shell.chat-active .dm-list { display: none; }
+  .dm-shell.chat-active .dm-chat { display: flex; }
+  .dm-back { display: inline-flex; }
+  .dm-list { max-height: 420px; }
+}
 
 @media (max-width: 1100px) {
   .tv-layout {

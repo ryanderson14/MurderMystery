@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>80s Prom Mystery — TV</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js" crossorigin="anonymous"></script>
 </head>
 <body class="tv">
   <header class="topbar">
@@ -27,7 +28,7 @@
 
             <div class="suspect">
               <div class="suspect-label">Suspect</div>
-              <div class="suspect-value">{{ c.suspect_score }}</div>
+              <div class="suspect-value" data-char-id="{{ c.id }}">{{ c.suspect_score }}</div>
             </div>
 
             <div class="bio">{{ c.bio }}</div>
@@ -57,12 +58,12 @@
               </div>
               <div>
                 <div class="message-author">
-                  {% if m.is_anonymous %}Anonymous{% else %}{{ m.author_name or "Unknown" }}{% endif %}
+                  {% if m.is_anonymous %}Anonymous{% else %}{{ m.sender_name or "Unknown" }}{% endif %}
                 </div>
-                <div class="message-time">{{ m.created_at }}</div>
+                <div class="message-time">{{ m.ts }}</div>
               </div>
             </div>
-            <div class="message-content">{{ m.content }}</div>
+            <div class="message-content">{{ m.body }}</div>
           </article>
         {% else %}
           <div class="muted">No messages yet.</div>
@@ -94,12 +95,12 @@
             <div class="avatar small">${msg.is_anonymous ? "👤" : (msg.avatar || "🪩")}</div>
             <div>
               <div class="message-author">${msg.is_anonymous ? "Anonymous" : msg.author}</div>
-              <div class="message-time">${msg.created_at}</div>
+              <div class="message-time">${msg.ts}</div>
             </div>
           </div>
           <div class="message-content"></div>
         `;
-        item.querySelector(".message-content").textContent = msg.content;
+        item.querySelector(".message-content").textContent = msg.body;
         tvFeedEl.appendChild(item);
       });
     }
@@ -115,8 +116,39 @@
       }
     }
 
+    function addMessage(msg) {
+      if (!tvFeedEl) return;
+      const item = document.createElement("article");
+      item.className = "message-card";
+      item.innerHTML = `
+        <div class="message-meta">
+          <div class="avatar small">${msg.is_anonymous ? "👤" : (msg.avatar || "🪩")}</div>
+          <div>
+            <div class="message-author">${msg.is_anonymous ? "Anonymous" : msg.author}</div>
+            <div class="message-time">${msg.ts}</div>
+          </div>
+        </div>
+        <div class="message-content"></div>
+      `;
+      item.querySelector(".message-content").textContent = msg.body;
+      tvFeedEl.prepend(item);
+      while (tvFeedEl.children.length > 50) {
+        tvFeedEl.removeChild(tvFeedEl.lastChild);
+      }
+    }
+
+    function updateSuspect(data) {
+      const el = document.querySelector(`[data-char-id="${data.character_id}"]`);
+      if (el) el.textContent = data.suspect_score;
+    }
+
+    const socket = io();
+    socket.on("public_message", (msg) => addMessage(msg));
+    socket.on("public_cleared", () => refreshFeed());
+    socket.on("suspect_update", (data) => updateSuspect(data));
+
     refreshFeed();
-    setInterval(refreshFeed, 4000);
+    setInterval(refreshFeed, 15000);
   </script>
 </body>
 </html>
