@@ -9,32 +9,114 @@
 <body class="tv">
   <header class="topbar">
     <div class="title">🪩 80s Prom Mystery</div>
-    <div class="subtitle">Character Board</div>
+    <div class="subtitle">Character Board + Public Feed</div>
   </header>
 
-  <main class="grid">
-    {% for c in characters %}
-      <section class="card {% if not c.is_alive %}dead{% endif %}">
-        <div class="avatar">{{ c.avatar_emoji }}</div>
-        <div class="name">{{ c.name }}</div>
-        <div class="tag">{{ c.role_tag }}</div>
+  <main class="tv-layout">
+    <div class="grid-wrap">
+      <div class="section-head">
+        <div class="section-title">Characters</div>
+        <div class="section-subtitle">Lives + suspect points</div>
+      </div>
+      <div class="grid">
+        {% for c in characters %}
+          <section class="card {% if not c.is_alive %}dead{% endif %}">
+            <div class="avatar">{{ c.avatar_emoji }}</div>
+            <div class="name">{{ c.name }}</div>
+            <div class="tag">{{ c.role_tag }}</div>
 
-        <div class="suspect">
-          <div class="suspect-label">Suspect</div>
-          <div class="suspect-value">{{ c.suspect_score }}</div>
+            <div class="suspect">
+              <div class="suspect-label">Suspect</div>
+              <div class="suspect-value">{{ c.suspect_score }}</div>
+            </div>
+
+            <div class="bio">{{ c.bio }}</div>
+
+            {% if not c.is_alive %}
+              <div class="death-overlay">💀 ELIMINATED 💀</div>
+            {% endif %}
+          </section>
+        {% endfor %}
+      </div>
+    </div>
+
+    <section class="panel feed-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Public Feed</div>
+          <div class="panel-subtitle">Live posts from the phones</div>
         </div>
-
-        <div class="bio">{{ c.bio }}</div>
-
-        {% if not c.is_alive %}
-          <div class="death-overlay">💀 ELIMINATED 💀</div>
-        {% endif %}
-      </section>
-    {% endfor %}
+        <div class="pill live">LIVE</div>
+      </div>
+      <div class="message-list" id="tv-feed">
+        {% for m in messages %}
+          <article class="message-card">
+            <div class="message-meta">
+              <div class="avatar small">
+                {% if m.is_anonymous %}👤{% else %}{{ m.avatar_emoji or "🪩" }}{% endif %}
+              </div>
+              <div>
+                <div class="message-author">
+                  {% if m.is_anonymous %}Anonymous{% else %}{{ m.author_name or "Unknown" }}{% endif %}
+                </div>
+                <div class="message-time">{{ m.created_at }}</div>
+              </div>
+            </div>
+            <div class="message-content">{{ m.content }}</div>
+          </article>
+        {% else %}
+          <div class="muted">No messages yet.</div>
+        {% endfor %}
+      </div>
+    </section>
   </main>
 
   <footer class="footer">
-    Open <span class="pill">/gm</span> on your laptop/phone to reset + seed data.
+    Phones: open <span class="pill">/app</span> and log in with your code. GM: <span class="pill">/gm</span> to reset + seed data.
   </footer>
+
+  <script>
+    const tvFeedEl = document.getElementById("tv-feed");
+    const apiUrl = "{{ url_for('api_messages') }}";
+
+    function renderFeed(data) {
+      if (!tvFeedEl) return;
+      tvFeedEl.innerHTML = "";
+      if (!data.length) {
+        tvFeedEl.innerHTML = "<div class='muted'>No messages yet.</div>";
+        return;
+      }
+      data.forEach(msg => {
+        const item = document.createElement("article");
+        item.className = "message-card";
+        item.innerHTML = `
+          <div class="message-meta">
+            <div class="avatar small">${msg.is_anonymous ? "👤" : (msg.avatar || "🪩")}</div>
+            <div>
+              <div class="message-author">${msg.is_anonymous ? "Anonymous" : msg.author}</div>
+              <div class="message-time">${msg.created_at}</div>
+            </div>
+          </div>
+          <div class="message-content"></div>
+        `;
+        item.querySelector(".message-content").textContent = msg.content;
+        tvFeedEl.appendChild(item);
+      });
+    }
+
+    async function refreshFeed() {
+      try {
+        const res = await fetch(apiUrl);
+        if (!res.ok) return;
+        const data = await res.json();
+        renderFeed(data);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    refreshFeed();
+    setInterval(refreshFeed, 4000);
+  </script>
 </body>
 </html>

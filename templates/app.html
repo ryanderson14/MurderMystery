@@ -1,0 +1,135 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>80s Prom Mystery — Player App</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="app">
+  <header class="topbar app-top">
+    <div>
+      <div class="title">🪩 80s Prom Mystery</div>
+      <div class="subtitle">Public Message Feed</div>
+    </div>
+    {% if character %}
+      <div class="user-chip">
+        <div class="avatar small">{{ character.avatar_emoji }}</div>
+        <div>
+          <div class="user-name">{{ character.name }}</div>
+          <div class="user-tag">Logged in</div>
+        </div>
+        <a class="link" href="{{ url_for('app_logout') }}">Switch</a>
+      </div>
+    {% endif %}
+  </header>
+
+  <main class="app-shell">
+    {% if error %}
+      <div class="alert">{{ error }}</div>
+    {% endif %}
+
+    {% if not character %}
+      <section class="panel">
+        <div class="panel-title">Enter your code</div>
+        <p class="muted">Ask the GM if you forgot yours.</p>
+        <form class="login-form" action="{{ url_for('app_login') }}" method="post">
+          <input type="text" name="code" placeholder="ALEX9" maxlength="6" required autofocus />
+          <button class="btn primary" type="submit">Log In</button>
+        </form>
+      </section>
+    {% else %}
+      <section class="panel">
+        <div class="panel-title">Post to Public</div>
+        <form class="post-form" action="{{ url_for('app_post') }}" method="post">
+          <textarea name="content" rows="3" placeholder="Share a clue, alibi, or rumor…" maxlength="280" required></textarea>
+          <div class="form-row">
+            <label class="checkbox">
+              <input type="checkbox" name="anonymous">
+              <span>Post as Anonymous</span>
+            </label>
+            <div class="actions">
+              <button class="btn" type="button" onclick="document.querySelector('.post-form textarea').value=''">Clear</button>
+              <button class="btn primary" type="submit">Post Public</button>
+            </div>
+          </div>
+        </form>
+      </section>
+    {% endif %}
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Public Feed</div>
+          <div class="panel-subtitle">Phones + TV see this together</div>
+        </div>
+        <div class="pill live">LIVE</div>
+      </div>
+      <div class="message-list" id="app-feed">
+        {% for m in messages %}
+          <article class="message-card">
+            <div class="message-meta">
+              <div class="avatar small">
+                {% if m.is_anonymous %}👤{% else %}{{ m.avatar_emoji or "🪩" }}{% endif %}
+              </div>
+              <div>
+                <div class="message-author">
+                  {% if m.is_anonymous %}Anonymous{% else %}{{ m.author_name or "Unknown" }}{% endif %}
+                </div>
+                <div class="message-time">{{ m.created_at }}</div>
+              </div>
+            </div>
+            <div class="message-content">{{ m.content }}</div>
+          </article>
+        {% else %}
+          <div class="muted">No messages yet. Be the first to post.</div>
+        {% endfor %}
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const appFeedEl = document.getElementById("app-feed");
+    const apiUrl = "{{ url_for('api_messages') }}";
+
+    function renderFeed(data) {
+      if (!appFeedEl) return;
+      appFeedEl.innerHTML = "";
+      if (!data.length) {
+        appFeedEl.innerHTML = "<div class='muted'>No messages yet.</div>";
+        return;
+      }
+      data.forEach(msg => {
+        const item = document.createElement("article");
+        item.className = "message-card";
+        item.innerHTML = `
+          <div class="message-meta">
+            <div class="avatar small">${msg.is_anonymous ? "👤" : (msg.avatar || "🪩")}</div>
+            <div>
+              <div class="message-author">${msg.is_anonymous ? "Anonymous" : msg.author}</div>
+              <div class="message-time">${msg.created_at}</div>
+            </div>
+          </div>
+          <div class="message-content"></div>
+        `;
+        item.querySelector(".message-content").textContent = msg.content;
+        appFeedEl.appendChild(item);
+      });
+    }
+
+    async function refreshFeed() {
+      try {
+        const res = await fetch(apiUrl);
+        if (!res.ok) return;
+        const data = await res.json();
+        renderFeed(data);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    refreshFeed();
+    setInterval(refreshFeed, 4000);
+  </script>
+</body>
+</html>
