@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>80s Prom Mystery — TV</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="tv">
+  <header class="topbar">
+    <div class="title">🪩 80s Prom Mystery</div>
+    <div class="subtitle">Character Board</div>
+  </header>
+
+  <main class="grid">
+    {% for c in characters %}
+      <section class="card {% if not c.is_alive %}dead{% endif %}">
+        <div class="avatar">{{ c.avatar_emoji }}</div>
+        <div class="name">{{ c.name }}</div>
+        <div class="tag">{{ c.role_tag }}</div>
+
+        <div class="suspect">
+          <div class="suspect-label">Suspect</div>
+          <div class="suspect-value">{{ c.suspect_score }}</div>
+        </div>
+
+        <div class="bio">{{ c.bio }}</div>
+
+        {% if not c.is_alive %}
+          <div class="death-overlay">💀 ELIMINATED 💀</div>
+        {% endif %}
+      </section>
+    {% endfor %}
+  </main>
+
+  <footer class="footer">
+    Open <span class="pill">/gm</span> on your laptop/phone to reset + seed data.
+  </footer>
+</body>
+</html>
