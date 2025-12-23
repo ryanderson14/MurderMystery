@@ -1,0 +1,106 @@
+{
+  "school": {
+    "name": "Naperville High",
+    "avatar_emoji": "🏫",
+    "display_title": "Naperville High Prom 1986"
+  },
+  "game": {
+    "starting_balance": 500,
+    "accuse_cooldown_seconds": 300
+  },
+  "jukebox": {
+    "thriller_filename": "Michael Jackson - Thriller.mp3"
+  },
+  "characters": [
+    {
+      "name": "Coach Walters",
+      "role_tag": "Baseball Coach",
+      "bio": "Authoritative and strong, not afraid of anyone.",
+      "avatar_emoji": "🧢",
+      "is_alive": 1,
+      "suspect_score": 0,
+      "balance": 500,
+      "login_code": "COACH2"
+    },
+    {
+      "name": "Dolly Dancer",
+      "role_tag": "Pompon Captain",
+      "bio": "Outgoing, pretty, popular, and a bit conniving.",
+      "avatar_emoji": "💃",
+      "is_alive": 1,
+      "suspect_score": 0,
+      "balance": 500,
+      "login_code": "DOLLY1"
+    },
+    {
+      "name": "Cindy Sensational",
+      "role_tag": "Class Sweetheart",
+      "bio": "Nice and pleasant, but can think and act on grudges.",
+      "avatar_emoji": "🌸",
+      "is_alive": 1,
+      "suspect_score": 0,
+      "balance": 500,
+      "login_code": "CINDY5"
+    },
+    {
+      "name": "Peter Prez",
+      "role_tag": "Class President",
+      "bio": "Go-getter who will stop at nothing to get what he wants.",
+      "avatar_emoji": "🏛️",
+      "is_alive": 1,
+      "suspect_score": 0,
+      "balance": 500,
+      "login_code": "PETER9"
+    },
+    {
+      "name": "Gabby Backer",
+      "role_tag": "Gossip",
+      "bio": "Jealous and jaded, looks out for her own interests.",
+      "avatar_emoji": "🗣️",
+      "is_alive": 1,
+      "suspect_score": 0,
+      "balance": 500,
+      "login_code": "GABBY6"
+    },
+    {
+      "name": "Bobby Backer",
+      "role_tag": "Jock",
+      "bio": "Confident, cocky, and used to people bending over backwards.",
+      "avatar_emoji": "🏋️",
+      "is_alive": 1,
+      "suspect_score": 0,
+      "balance": 500,
+      "login_code": "BOBBY4"
+    },
+    {
+      "name": "Clerical Katie",
+      "role_tag": "Class Secretary",
+      "bio": "Sweetheart to most, vindictive when crossed.",
+      "avatar_emoji": "📝",
+      "is_alive": 1,
+      "suspect_score": 0,
+      "balance": 500,
+      "login_code": "KATIE3"
+    },
+    {
+      "name": "Kevin Catcher",
+      "role_tag": "Baseball Player",
+      "bio": "Athletic, underestimated, and devoted to Cindy.",
+      "avatar_emoji": "⚾",
+      "is_alive": 1,
+      "suspect_score": 0,
+      "balance": 500,
+      "login_code": "KEVIN8"
+    },
+    {
+      "name": "Sally Spirit",
+      "role_tag": "Cheerleader",
+      "bio": "Popular and fun, but can make enemies through jealousy.",
+      "avatar_emoji": "📣",
+      "is_alive": 1,
+      "suspect_score": 0,
+      "balance": 500,
+      "login_code": "SALLY7"
+    }
+  ]
+}

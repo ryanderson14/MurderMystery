@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>80s Prom Mystery — TV</title>
+  <title>{{ school_title }} — TV</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js" crossorigin="anonymous"></script>
 </head>
 <body class="tv {{ 'phase-two' if phase_two else 'phase-one' }}">
   <header class="topbar">
     <div class="topbar-text">
-      <div class="title">🪩 Naperville High Prom 1986</div>
+      <div class="title">🪩 {{ school_title }}</div>
     </div>
     <aside class="jukebox-dock" id="jukebox-dock">
     <div class="jukebox-card now-playing-card hidden" id="now-playing-card">
@@ -41,6 +41,9 @@
   </header>
 
   <audio id="jukebox-audio"></audio>
+  <audio id="murder-audio" preload="auto">
+    <source src="{{ url_for('static', filename='scream.mp3') }}" type="audio/mpeg" />
+  </audio>
 
   <div class="announce-layer" id="announce-layer" aria-live="polite">
     <div class="announce-dim"></div>
@@ -150,6 +153,7 @@
     const nowTitleEl = document.getElementById("now-title");
     const nowMetaEl = document.getElementById("now-meta");
     const jukeboxAudio = document.getElementById("jukebox-audio");
+    const murderAudio = document.getElementById("murder-audio");
     const nowProgressCircle = document.getElementById("now-progress-circle");
     const nowSkipBtn = document.getElementById("now-skip");
     const upNextCards = [
@@ -401,6 +405,11 @@
       murderOverlay.classList.remove("active");
       void murderOverlay.offsetWidth;
       murderOverlay.classList.add("active");
+      if (murderAudio) {
+        murderAudio.currentTime = 0;
+        murderAudio.volume = 1;
+        murderAudio.play().catch(() => {});
+      }
       if (murderTimer) clearTimeout(murderTimer);
       murderTimer = setTimeout(() => {
         murderOverlay.classList.remove("active");

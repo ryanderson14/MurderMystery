@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>80s Prom Mystery — Player App</title>
+  <title>{{ school_title }} — Player App</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js" crossorigin="anonymous"></script>
 </head>
 <body class="app {{ 'phase-two' if phase_two else 'phase-one' }}">
   <header class="topbar app-top">
     <div>
-      <div class="title">🪩 80s Prom Mystery</div>
+      <div class="title">🪩 {{ school_title }}</div>
       <div class="subtitle">Public Feed, DMs, and Suspect points</div>
     </div>
     {% if character %}

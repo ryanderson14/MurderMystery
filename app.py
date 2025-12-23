@@ -1,4 +1,5 @@
 import os
+import json
 import sqlite3
 import sys
 import time
@@ -10,10 +11,24 @@ from flask import Flask, render_template, redirect, url_for, request, session, j
 from flask_socketio import SocketIO, join_room
 
 APP_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = APP_DIR / "config.json"
 DB_PATH = APP_DIR / "mystery.db"
 JUKEBOX_DIR = APP_DIR / "static" / "jukebox"
 PHOTOBOOTH_DIR = APP_DIR / "static" / "photobooth"
-THRILLER_FILENAME = "Michael Jackson - Thriller.mp3"
+
+def load_config():
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+CONFIG = load_config()
+SCHOOL_NAME = CONFIG["school"]["name"]
+SCHOOL_AVATAR_EMOJI = CONFIG["school"]["avatar_emoji"]
+SCHOOL_TITLE = CONFIG["school"].get("display_title", SCHOOL_NAME)
+GAME_CONFIG = CONFIG["game"]
+STARTING_BALANCE = int(GAME_CONFIG["starting_balance"])
+ACCUSE_COOLDOWN_SECONDS = int(GAME_CONFIG["accuse_cooldown_seconds"])
+THRILLER_FILENAME = CONFIG["jukebox"]["thriller_filename"]
+CHARACTER_SEED = CONFIG["characters"]
 
 
 def resolve_async_mode():
@@ -33,7 +48,6 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 socketio = SocketIO(app, async_mode=ASYNC_MODE, cors_allowed_origins="*")
 last_accuse_times = {}
-ACCUSE_COOLDOWN_SECONDS = 300
 
 # ---------- DB helpers ----------
 def get_db():
@@ -43,6 +57,7 @@ def get_db():
     return conn
 
 def ensure_characters_table(conn):
+    balance_default = int(STARTING_BALANCE)
     conn.execute("""
     CREATE TABLE IF NOT EXISTS characters (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,13 +67,13 @@ def ensure_characters_table(conn):
         avatar_emoji TEXT NOT NULL,
         is_alive INTEGER NOT NULL DEFAULT 1,
         suspect_score INTEGER NOT NULL DEFAULT 0,
-        balance INTEGER NOT NULL DEFAULT 500,
+        balance INTEGER NOT NULL DEFAULT {balance_default},
         login_code TEXT NOT NULL UNIQUE
     )
-    """)
+    """.format(balance_default=balance_default))
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(characters)").fetchall()}
     if "balance" not in cols:
-        conn.execute("ALTER TABLE characters ADD COLUMN balance INTEGER NOT NULL DEFAULT 500")
+        conn.execute(f"ALTER TABLE characters ADD COLUMN balance INTEGER NOT NULL DEFAULT {balance_default}")
 
 def ensure_messages_table(conn):
     existing = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'").fetchone()
@@ -230,18 +245,18 @@ def reset_and_seed():
 
     init_db()
 
-    characters = [
-        # name, role_tag, bio, avatar_emoji, is_alive, suspect_score, balance, login_code
-        ("Coach Walters",       "Baseball Coach",          "Authoritative and strong, not afraid of anyone.", "🧢", 1, 0, 500, "COACH2"),
-        ("Dolly Dancer",        "Pompon Captain",          "Outgoing, pretty, popular, and a bit conniving.", "💃", 1, 0, 500, "DOLLY1"),
-        ("Cindy Sensational",   "Class Sweetheart",        "Nice and pleasant, but can think and act on grudges.", "🌸", 1, 0, 500, "CINDY5"),
-        ("Peter Prez",          "Class President",         "Go-getter who will stop at nothing to get what he wants.", "🏛️", 1, 0, 500, "PETER9"),
-        ("Gabby Backer",        "Gossip",                  "Jealous and jaded, looks out for her own interests.", "🗣️", 1, 0, 500, "GABBY6"),
-        ("Bobby Backer",        "Jock",                    "Confident, cocky, and used to people bending over backwards.", "🏋️", 1, 0, 500, "BOBBY4"),
-        ("Clerical Katie",      "Class Secretary",         "Sweetheart to most, vindictive when crossed.", "📝", 1, 0, 500, "KATIE3"),
-        ("Kevin Catcher",       "Baseball Player",         "Athletic, underestimated, and devoted to Cindy.", "⚾", 1, 0, 500, "KEVIN8"),
-        ("Sally Spirit",        "Cheerleader",             "Popular and fun, but can make enemies through jealousy.", "📣", 1, 0, 500, "SALLY7"),
-    ]
+    characters = []
+    for character in CHARACTER_SEED:
+        characters.append((
+            character["name"],
+            character["role_tag"],
+            character["bio"],
+            character["avatar_emoji"],
+            int(character.get("is_alive", 1)),
+            int(character.get("suspect_score", 0)),
+            int(character.get("balance", STARTING_BALANCE)),
+            character["login_code"],
+        ))
 
     conn = get_db()
     cur = conn.cursor()
@@ -288,8 +303,8 @@ def fetch_public_messages(limit=50):
     return rows
 
 def serialize_public_message(row):
-    system_author = "Naperville High"
-    system_avatar = "🏫"
+    system_author = SCHOOL_NAME
+    system_avatar = SCHOOL_AVATAR_EMOJI
     author = "Anonymous" if row["is_anonymous"] else (row["sender_name"] or system_author)
     avatar = "" if row["is_anonymous"] else (row["avatar_emoji"] or system_avatar)
     return {
@@ -616,7 +631,14 @@ def tv():
     """).fetchall()
     conn.close()
     messages = fetch_public_messages()
-    return render_template("tv.html", characters=chars, messages=messages, phase_two=phase_two)
+    return render_template(
+        "tv.html",
+        characters=chars,
+        messages=messages,
+        phase_two=phase_two,
+        school_name=SCHOOL_NAME,
+        school_title=SCHOOL_TITLE,
+    )
 
 @app.route("/api/messages")
 def api_messages():
@@ -796,6 +818,8 @@ def player_app():
         wallet_notifications=wallet_notifications,
         wallet_pending_count=wallet_pending_count,
         phase_two=phase_two,
+        school_name=SCHOOL_NAME,
+        school_title=SCHOOL_TITLE,
     )
 
 @app.route("/photobooth")

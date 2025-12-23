@@ -108,13 +108,13 @@ body.phase-two .player-card.top-suspect .score-bubble {
 .subtitle { color: var(--muted); margin-top: 4px; }
 .topbar-text .subtitle { margin-top: 0; }
 .tv .title { font-size: 34px; }
-.tv .title {
+.tv.phase-two .title {
   position: relative;
   display: inline-block;
   overflow: hidden;
   animation: title-wave 5.5s ease-in-out infinite;
 }
-.tv .title::after {
+.tv.phase-two .title::after {
   content: "";
   position: absolute;
   inset: 0;
