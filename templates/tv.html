@@ -51,6 +51,15 @@
     </div>
   </div>
 
+  <div class="murder-overlay" id="murder-overlay" aria-live="assertive" aria-atomic="true">
+    <div class="murder-backdrop"></div>
+    <div class="murder-flash"></div>
+    <div class="murder-content">
+      <img src="{{ url_for('static', filename='knife.gif') }}" alt="Knife" class="murder-knife" />
+      <div class="murder-text">A murder has occurred!</div>
+    </div>
+  </div>
+
   <main class="tv-layout">
     {% set sorted_chars = characters %}
     {% set alive_chars = sorted_chars|selectattr("is_alive")|list %}
@@ -125,6 +134,10 @@
     </section>
   </main>
 
+  <div class="qr-overlay">
+    <img src="{{ url_for('static', filename='code.png') }}" alt="Scan to open the app" />
+  </div>
+
   <footer class="footer">
     Phones: open <span class="pill">/app</span> and log in with your code. GM: <span class="pill">/gm</span> to reset + seed data.
   </footer>
@@ -160,6 +173,8 @@
     const announceText = document.getElementById("announce-text");
     const announceBall = document.querySelector(".announce-ball");
     let announceTimer = null;
+    const murderOverlay = document.getElementById("murder-overlay");
+    let murderTimer = null;
 
     const avatarExts = [".jpg", ".png", ".gif"];
     const bodyEl = document.body;
@@ -334,7 +349,9 @@
     function updateCharacterStatus(data) {
       const card = document.querySelector(`.player-card[data-char-id="${data.character_id}"]`);
       if (!card) return;
+      const wasAlive = (card.dataset.alive || "1") === "1";
       const alive = !!data.is_alive;
+      if (wasAlive && !alive) triggerMurderOverlay();
       card.dataset.alive = alive ? "1" : "0";
       card.classList.toggle("dead", !alive);
       const overlay = card.querySelector(".death-overlay");
@@ -377,6 +394,17 @@
         announceLayer.classList.remove("active");
         bodyEl?.classList.remove("announce-dimmed");
       }, 30000);
+    }
+
+    function triggerMurderOverlay() {
+      if (!murderOverlay) return;
+      murderOverlay.classList.remove("active");
+      void murderOverlay.offsetWidth;
+      murderOverlay.classList.add("active");
+      if (murderTimer) clearTimeout(murderTimer);
+      murderTimer = setTimeout(() => {
+        murderOverlay.classList.remove("active");
+      }, 5000);
     }
 
     if (announceBall) {

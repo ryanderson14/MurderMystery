@@ -304,6 +304,31 @@ body.phase-two .player-card.top-suspect .score-bubble {
   border-top: 1px solid var(--line);
   color: var(--muted);
 }
+.qr-overlay {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2;
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(8,8,14,0.45);
+  box-shadow: 0 12px 24px rgba(0,0,0,0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+.qr-overlay img {
+  display: block;
+  width: clamp(88px, 10vw, 140px);
+  height: auto;
+}
+@media (max-width: 900px) {
+  .qr-overlay {
+    right: 12px;
+    bottom: 12px;
+  }
+}
 .pill {
   padding: 2px 8px;
   border: 1px solid var(--line);
@@ -869,6 +894,59 @@ body.phase-two .photo-frame::after {
   text-shadow: 0 0 8px rgba(255,255,255,0.35);
 }
 
+.murder-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+  z-index: 6;
+}
+.murder-overlay.active {
+  opacity: 1;
+  visibility: visible;
+}
+.murder-backdrop,
+.murder-flash {
+  position: absolute;
+  inset: 0;
+}
+.murder-backdrop {
+  background: rgba(0,0,0,0.85);
+}
+.murder-flash {
+  background: linear-gradient(140deg, rgba(160,0,20,0.65), rgba(20,0,0,0.9));
+  opacity: 0.2;
+}
+.murder-overlay.active .murder-flash {
+  animation: murder-flash 0.6s steps(2, end) infinite;
+}
+.murder-content {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  gap: 14px;
+  text-align: center;
+  animation: murder-pop 0.4s ease-out;
+}
+.murder-knife {
+  width: clamp(180px, 26vw, 360px);
+  height: auto;
+  filter: drop-shadow(0 16px 26px rgba(0,0,0,0.65));
+}
+.murder-text {
+  font-size: clamp(22px, 3.6vw, 44px);
+  font-weight: 900;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #ffd6dd;
+  text-shadow: 0 0 18px rgba(255,60,80,0.55);
+}
+
 @keyframes drop-in {
   0% { transform: translateY(-180%); }
   50% { transform: translateY(6%); }
@@ -890,6 +968,14 @@ body.phase-two .photo-frame::after {
 @keyframes strobe {
   0%, 100% { opacity: 0.08; filter: blur(2px); }
   50% { opacity: 0.16; filter: blur(1px); }
+}
+@keyframes murder-flash {
+  0%, 100% { opacity: 0.15; }
+  50% { opacity: 0.7; }
+}
+@keyframes murder-pop {
+  0% { transform: scale(0.92); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 /* App page */
