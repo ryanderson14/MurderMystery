@@ -1,2 +1,5 @@
 static/photobooth/*
 layout_mockup.docx.DS_Store
+
+# local sqlite db
+mystery.db
