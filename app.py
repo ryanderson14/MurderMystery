@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import sys
 import time
 import base64
 import uuid
@@ -14,9 +15,23 @@ JUKEBOX_DIR = APP_DIR / "static" / "jukebox"
 PHOTOBOOTH_DIR = APP_DIR / "static" / "photobooth"
 THRILLER_FILENAME = "Michael Jackson - Thriller.mp3"
 
+
+def resolve_async_mode():
+    """Prefer eventlet when available, but avoid it on Python 3.13+ until support is stable."""
+    if sys.version_info >= (3, 13):
+        return "threading"
+    try:
+        import eventlet  # noqa: F401
+    except ImportError:
+        return "threading"
+    return "eventlet"
+
+
+ASYNC_MODE = resolve_async_mode()
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
-socketio = SocketIO(app, async_mode="eventlet", cors_allowed_origins="*")
+socketio = SocketIO(app, async_mode=ASYNC_MODE, cors_allowed_origins="*")
 last_accuse_times = {}
 ACCUSE_COOLDOWN_SECONDS = 300
 
@@ -1290,4 +1305,4 @@ def jukebox_skip(data):
 
 if __name__ == "__main__":
     init_db()
-    socketio.run(app, host="0.0.0.0", port=5001, debug=True)
+    socketio.run(app, host="0.0.0.0", port=5001, debug=True, allow_unsafe_werkzeug=True)
