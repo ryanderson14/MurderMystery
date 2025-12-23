@@ -513,6 +513,13 @@ body.phase-two .player-card.top-suspect .score-bubble {
 .gm-row-name { font-weight: 800; }
 .gm-row-role { color: var(--muted); font-size: 13px; }
 .gm-row-status { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.gm-danger {
+  margin-top: 28px;
+  padding-top: 16px;
+  border-top: 1px dashed rgba(255,255,255,0.2);
+  opacity: 0.85;
+}
+.gm-danger .btn { margin-top: 8px; }
 .btn {
   display: inline-block;
   margin-top: 12px;

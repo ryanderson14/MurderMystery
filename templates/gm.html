@@ -9,10 +9,6 @@
 <body class="gm {{ 'phase-two' if phase_two else 'phase-one' }}">
   <div class="gm-wrap">
     <h1>GM Tools</h1>
-    <p>Use this to reset and seed the 9 characters.</p>
-    <a class="btn" href="/gm/seed">Reset + Seed Characters</a>
-    <p class="hint">Clears characters, suspect points, messages.</p>
-    <hr class="divider" />
     <p>Moderate the public feed (keeps DMs):</p>
     <a class="btn" href="/gm/clear_public">Clear Public Feed</a>
     <p class="hint">Then open <strong>/tv</strong> on the TV.</p>
@@ -49,6 +45,15 @@
         {% endfor %}
       </div>
     </div>
+    <hr class="divider" />
+    <div class="gm-danger">
+      <div class="panel-title">Full Reset</div>
+      <p class="hint">Clears characters, suspect points, all messages (public + DMs), balances, photobooth strips, announcements, and jukebox queue.</p>
+      <form action="/gm/seed" method="post" onsubmit="return confirm('This will wipe everything and reseed the game. Continue?');">
+        <button class="btn danger" type="submit">Full Reset + Reseed</button>
+      </form>
+    </div>
+
   </div>
 </body>
 </html>

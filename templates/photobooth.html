@@ -11,10 +11,9 @@
     <div class="booth-header">
       <div>
         <div class="booth-title">📸 Photo Booth</div>
-        <div class="booth-subtitle">Press start for a 4-shot strip.</div>
+        <div class="booth-subtitle">Press space for a 4-shot strip.</div>
       </div>
-      <button class="btn primary" id="start-btn">Start</button>
-    </div>
+          </div>
 
     <div class="booth-stage">
       <video id="booth-video" autoplay playsinline muted></video>
@@ -28,7 +27,6 @@
 
   <script>
     const video = document.getElementById("booth-video");
-    const startBtn = document.getElementById("start-btn");
     const overlay = document.getElementById("booth-overlay");
     const flash = document.getElementById("booth-flash");
     const statusEl = document.getElementById("booth-status");
@@ -86,7 +84,6 @@
     async function runBooth() {
       if (busy) return;
       busy = true;
-      startBtn.disabled = true;
       statusEl.textContent = "Get ready...";
       const shots = [];
       for (let i = 0; i < 4; i++) {
@@ -110,10 +107,13 @@
         statusEl.textContent = "Upload failed. Check connection.";
       }
       busy = false;
-      startBtn.disabled = false;
     }
 
-    startBtn.addEventListener("click", () => {
+    document.addEventListener("keydown", (event) => {
+      if (event.code != "Space") return;
+      const tag = event.target.tagName;
+      if (tag == "INPUT" || tag == "TEXTAREA" || event.target.isContentEditable) return;
+      event.preventDefault();
       runBooth();
     });
 

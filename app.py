@@ -238,10 +238,15 @@ def reset_and_seed():
     cur.execute("DROP TABLE IF EXISTS jukebox_queue")
     cur.execute("DROP TABLE IF EXISTS wallet_requests")
     cur.execute("DROP TABLE IF EXISTS wallet_notifications")
-    # photostrips are preserved on reset
+    cur.execute("DROP TABLE IF EXISTS photostrips")
     cur.execute("DROP TABLE IF EXISTS characters")
     conn.commit()
     conn.close()
+
+    if PHOTOBOOTH_DIR.exists():
+        for path in PHOTOBOOTH_DIR.iterdir():
+            if path.is_file():
+                path.unlink()
 
     init_db()
 
@@ -1241,7 +1246,7 @@ def gm_kill():
 
     return redirect(url_for("gm"))
 
-@app.route("/gm/seed")
+@app.route("/gm/seed", methods=["POST"])
 def gm_seed():
     reset_and_seed()
     last_accuse_times.clear()
@@ -1250,12 +1255,19 @@ def gm_seed():
     conn.close()
     for row in scores:
         socketio.emit("suspect_update", {"character_id": row["id"], "suspect_score": row["suspect_score"]})
-        socketio.emit("character_status", {"character_id": row["id"], "is_alive": True, "suspect_score": row["suspect_score"]})
+        socketio.emit("character_status", {"character_id": row["id"], "is_alive": bool(row["is_alive"]), "suspect_score": row["suspect_score"]})
     socketio.emit("phase_change", {"phase_two": False})
     socketio.emit("public_cleared")
+    socketio.emit("photobooth_clear")
+    socketio.emit("announcement_clear")
     socketio.emit("jukebox_stop")
     socketio.emit("jukebox_queue", [])
-    return redirect(url_for("tv"))
+    return redirect(url_for("gm"))
+
+
+@app.route("/gm/seed", methods=["GET"])
+def gm_seed_get():
+    return redirect(url_for("gm"))
 
 @app.route("/gm/clear_public")
 def gm_clear_public():

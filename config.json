@@ -20,7 +20,7 @@
       "is_alive": 1,
       "suspect_score": 0,
       "balance": 500,
-      "login_code": "COACH2"
+      "login_code": "MOUSE"
     },
     {
       "name": "Dolly Dancer",
@@ -30,7 +30,7 @@
       "is_alive": 1,
       "suspect_score": 0,
       "balance": 500,
-      "login_code": "DOLLY1"
+      "login_code": "WHISP"
     },
     {
       "name": "Cindy Sensational",
@@ -40,7 +40,7 @@
       "is_alive": 1,
       "suspect_score": 0,
       "balance": 500,
-      "login_code": "CINDY5"
+      "login_code": "STYLE"
     },
     {
       "name": "Peter Prez",
@@ -50,7 +50,7 @@
       "is_alive": 1,
       "suspect_score": 0,
       "balance": 500,
-      "login_code": "PETER9"
+      "login_code": "DINGY"
     },
     {
       "name": "Gabby Backer",
@@ -60,7 +60,7 @@
       "is_alive": 1,
       "suspect_score": 0,
       "balance": 500,
-      "login_code": "GABBY6"
+      "login_code": "TOOLS"
     },
     {
       "name": "Bobby Backer",
@@ -70,7 +70,7 @@
       "is_alive": 1,
       "suspect_score": 0,
       "balance": 500,
-      "login_code": "BOBBY4"
+      "login_code": "SPLAT"
     },
     {
       "name": "Clerical Katie",
@@ -80,7 +80,7 @@
       "is_alive": 1,
       "suspect_score": 0,
       "balance": 500,
-      "login_code": "KATIE3"
+      "login_code": "PIANO"
     },
     {
       "name": "Kevin Catcher",
@@ -90,7 +90,7 @@
       "is_alive": 1,
       "suspect_score": 0,
       "balance": 500,
-      "login_code": "KEVIN8"
+      "login_code": "TANGY"
     },
     {
       "name": "Sally Spirit",
@@ -100,7 +100,7 @@
       "is_alive": 1,
       "suspect_score": 0,
       "balance": 500,
-      "login_code": "SALLY7"
+      "login_code": "BRIDE"
     }
   ]
 }

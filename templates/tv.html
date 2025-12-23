@@ -434,6 +434,13 @@
     socket.on("announcement", (data) => {
       if (data && data.body) showAnnouncement(data.body);
     });
+    socket.on("announcement_clear", () => {
+      if (!announceLayer) return;
+      announceLayer.classList.remove("active");
+      bodyEl?.classList.remove("announce-dimmed");
+      if (announceTimer) clearTimeout(announceTimer);
+      if (announceText) announceText.textContent = "";
+    });
     socket.on("jukebox_now", (data) => {
       setNowPlaying(data);
       fetchQueue();
@@ -446,6 +453,11 @@
     socket.on("photobooth_new", (data) => {
       if (!data) return;
       photostrips.unshift(data);
+      photostripIndex = 0;
+      renderPhotostrip();
+    });
+    socket.on("photobooth_clear", () => {
+      photostrips = [];
       photostripIndex = 0;
       renderPhotostrip();
     });
