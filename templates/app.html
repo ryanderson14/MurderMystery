@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js" crossorigin="anonymous"></script>
 </head>
-<body class="app">
+<body class="app {{ 'phase-two' if phase_two else 'phase-one' }}">
   <header class="topbar app-top">
     <div>
       <div class="title">🪩 80s Prom Mystery</div>
@@ -47,7 +47,7 @@
         DMs
         <span class="dm-badge {% if dm_unread_total == 0 %}hidden{% endif %}" id="dm-badge" data-count="{{ dm_unread_total }}">{{ dm_unread_total }}</span>
       </button>
-      <button class="tab-btn {% if (tab or 'feed') == 'suspect' %}active{% endif %}" id="suspect-tab" data-tab="suspect" {% if not character %}disabled{% endif %}>
+      <button class="tab-btn {% if (tab or 'feed') == 'suspect' %}active{% endif %} {% if not phase_two %}hidden-tab{% endif %}" id="suspect-tab" data-tab="suspect" data-locked="{{ 0 if phase_two else 1 }}" {% if not character %}disabled{% endif %}>
         Suspect
         <span class="tab-clock {% if cooldown_remaining == 0 %}hidden{% endif %}" id="suspect-clock">⏱</span>
       </button>
@@ -56,7 +56,7 @@
         <span class="dm-badge {% if wallet_pending_count == 0 %}hidden{% endif %}" id="wallet-badge" data-count="{{ wallet_pending_count }}">{{ wallet_pending_count }}</span>
       </button>
       <button class="tab-btn {% if (tab or 'feed') == 'jukebox' %}active{% endif %}" data-tab="jukebox">
-        Jukebox
+        DJ Requests
       </button>
     </div>
 
@@ -88,7 +88,7 @@
       </div>
       <div class="message-list" id="app-feed">
         {% for m in messages %}
-          <article class="message-card">
+          <article class="message-card {% if m.pinned %}pinned{% endif %}">
             <div class="message-meta">
               <div class="avatar small">
                 {% if m.is_anonymous %}👤{% else %}{{ m.avatar_emoji or "🪩" }}{% endif %}
@@ -101,6 +101,7 @@
               </div>
             </div>
             <div class="message-content">{{ m.body }}</div>
+            {% if m.pinned %}<div class="pin-label">📌 Pinned</div>{% endif %}
           </article>
         {% else %}
           <div class="muted">No messages yet. Be the first to post.</div>
@@ -158,7 +159,7 @@
                 <div class="dm-chat-name" id="dm-chat-name">{{ selected_dm_name or "Select a DM" }}</div>
                 <div class="dm-chat-role" id="dm-chat-role">{{ selected_dm_role or "" }}</div>
               </div>
-              <div class="avatar small dm-chat-avatar" id="dm-chat-avatar">{{ selected_dm_avatar or "🪩" }}</div>
+              <div class="avatar small dm-chat-avatar" id="dm-chat-avatar" data-base-emoji="{{ selected_dm_avatar or '🪩' }}">{{ selected_dm_avatar or "🪩" }}</div>
             </div>
             <div class="dm-thread" id="dm-thread">
               {% if selected_dm and (tab or 'feed') == 'dm' %}
@@ -189,7 +190,7 @@
       {% endif %}
     </section>
 
-    <section class="panel tab-panel {% if (tab or 'feed') == 'suspect' %}active{% endif %}" data-tab="suspect" id="suspect-panel">
+    <section class="panel tab-panel {% if (tab or 'feed') == 'suspect' %}active{% endif %} {% if not phase_two %}phase-locked{% endif %}" data-tab="suspect" id="suspect-panel">
       <div class="panel-head">
         <div>
           <div class="panel-title">Suspect Board</div>
@@ -206,17 +207,20 @@
         <div class="suspect-grid app-suspect {% if cooldown_remaining > 0 %}cooldown{% endif %}">
           {% for c in characters %}
             {% if c.id != character.id %}
-              <div class="suspect-card">
-                <div class="avatar small">{{ c.avatar_emoji }}</div>
+              <div class="suspect-card {% if not c.is_alive %}dead{% endif %}" data-char-id="{{ c.id }}" data-alive="{{ 1 if c.is_alive else 0 }}" data-score="{{ c.suspect_score }}">
+                <div class="avatar small" data-emoji="{{ c.avatar_emoji }}">{{ c.avatar_emoji if c.is_alive else "👻" }}</div>
                 <div class="suspect-copy">
                   <div class="name">{{ c.name }}</div>
                   <div class="muted">{{ c.role_tag }}</div>
                 </div>
                 <div class="suspect-score" data-char-id="{{ c.id }}">{{ c.suspect_score }}</div>
-                <form action="{{ url_for('app_accuse') }}" method="post">
-                  <input type="hidden" name="accused_id" value="{{ c.id }}">
-                  <button class="btn primary small" type="submit" {% if cooldown_remaining > 0 %}disabled{% endif %}>Accuse +1</button>
-                </form>
+                <div class="suspect-action">
+                  <form class="suspect-action-form {% if not c.is_alive %}hidden{% endif %}" action="{{ url_for('app_accuse') }}" method="post">
+                    <input type="hidden" name="accused_id" value="{{ c.id }}">
+                    <button class="btn primary small" type="submit" {% if cooldown_remaining > 0 %}disabled{% endif %}>Accuse +1</button>
+                  </form>
+                  <div class="dead-pill {% if c.is_alive %}hidden{% endif %}">Murdered</div>
+                </div>
               </div>
             {% endif %}
           {% endfor %}
@@ -227,7 +231,7 @@
     <section class="panel tab-panel {% if (tab or 'feed') == 'jukebox' %}active{% endif %}" data-tab="jukebox">
       <div class="panel-head">
         <div>
-          <div class="panel-title">Jukebox</div>
+          <div class="panel-title">DJ Requests</div>
           <div class="panel-subtitle">Queue a track for the dance floor</div>
         </div>
       </div>
@@ -246,7 +250,11 @@
               </div>
               <form action="{{ url_for('app_jukebox_queue') }}" method="post">
                 <input type="hidden" name="song_filename" value="{{ song.filename }}">
-                <button class="btn small" type="submit" {% if not character %}disabled{% endif %}>Queue</button>
+                {% if song.queued %}
+                  <button class="btn small queued" type="button" disabled>Queued</button>
+                {% else %}
+                  <button class="btn small" type="submit" {% if not character %}disabled{% endif %}>Queue</button>
+                {% endif %}
               </form>
             </div>
           {% endfor %}
@@ -344,6 +352,7 @@
     const appShell = document.querySelector(".app-shell");
     const tabButtons = document.querySelectorAll(".tab-btn");
     const panels = document.querySelectorAll(".tab-panel");
+    let isPhaseTwo = {{ "true" if phase_two else "false" }};
     let activeTab = appShell?.dataset.activeTab || "feed";
     const meId = {{ character.id if character else "null" }};
     let currentDm = {{ selected_dm if selected_dm else "null" }};
@@ -367,11 +376,17 @@
     const suspectGrid = suspectPanel ? suspectPanel.querySelector(".suspect-grid") : null;
     let suspectRemaining = parseInt(suspectCooldownEl?.dataset.seconds || "0", 10);
 
-    if (activeTab !== "feed") {
-      const btn = document.querySelector(`.tab-btn[data-tab="${activeTab}"]`);
-      if (btn && btn.disabled) {
-        activeTab = "feed";
-      }
+    function isTabAvailable(tab) {
+      if (!tab) return false;
+      if (tab === "suspect" && !isPhaseTwo) return false;
+      const btn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+      if (!btn) return false;
+      if (btn.classList.contains("hidden-tab")) return false;
+      return !btn.disabled;
+    }
+
+    if (activeTab !== "feed" && !isTabAvailable(activeTab)) {
+      activeTab = "feed";
     }
 
     if (!currentDm && dmListEl) {
@@ -383,6 +398,9 @@
     if (dmRecipientInput) dmRecipientInput.value = currentDm || "";
 
     function setTab(tab) {
+      if (!isTabAvailable(tab)) {
+        tab = "feed";
+      }
       activeTab = tab;
       tabButtons.forEach(btn => {
         btn.classList.toggle("active", btn.dataset.tab === tab);
@@ -397,10 +415,29 @@
         selectDmThread(currentDm, true);
       }
     }
+    function syncPhaseUi() {
+      document.body.classList.toggle("phase-two", isPhaseTwo);
+      document.body.classList.toggle("phase-one", !isPhaseTwo);
+      const suspectBtn = document.querySelector(".tab-btn[data-tab='suspect']");
+      const suspectPanelEl = document.querySelector(".tab-panel[data-tab='suspect']");
+      if (suspectBtn) {
+        suspectBtn.classList.toggle("hidden-tab", !isPhaseTwo);
+      }
+      if (suspectPanelEl) {
+        suspectPanelEl.classList.toggle("phase-locked", !isPhaseTwo);
+      }
+      if (!isPhaseTwo && activeTab === "suspect") {
+        setTab("feed");
+      } else if (isPhaseTwo && suspectRemaining <= 0) {
+        setSuspectEnabled(true);
+      }
+    }
+    syncPhaseUi();
     setTab(activeTab);
+    reflowSuspects();
     tabButtons.forEach(btn => {
       btn.addEventListener("click", () => {
-        if (btn.disabled) return;
+        if (btn.disabled || btn.classList.contains("hidden-tab")) return;
         setTab(btn.dataset.tab);
       });
     });
@@ -412,13 +449,17 @@
         feedEl.innerHTML = "<div class='muted'>No messages yet.</div>";
         return;
       }
+      data.sort((a, b) => {
+        if (a.pinned === b.pinned) return 0;
+        return a.pinned ? -1 : 1;
+      });
       data.forEach(msg => addFeedMessage(msg, false));
     }
 
     function addFeedMessage(msg, prepend = true) {
       if (!feedEl) return;
       const item = document.createElement("article");
-      item.className = "message-card";
+      item.className = "message-card" + (msg.pinned ? " pinned" : "");
       item.innerHTML = `
         <div class="message-meta">
           <div class="avatar small">${msg.is_anonymous ? "👤" : (msg.avatar || "🪩")}</div>
@@ -428,10 +469,18 @@
           </div>
         </div>
         <div class="message-content"></div>
+        ${msg.pinned ? '<div class="pin-label">📌 Pinned</div>' : ''}
       `;
       item.querySelector(".message-content").textContent = msg.body;
-      if (prepend) {
+      if (msg.pinned) {
         feedEl.prepend(item);
+      } else if (prepend) {
+        const pinnedEl = feedEl.querySelector(".message-card.pinned");
+        if (pinnedEl && pinnedEl.nextSibling) {
+          pinnedEl.parentNode.insertBefore(item, pinnedEl.nextSibling);
+        } else {
+          feedEl.prepend(item);
+        }
       } else {
         feedEl.appendChild(item);
       }
@@ -590,6 +639,65 @@
       suspectRemaining -= 1;
     }
 
+    function reflowSuspects() {
+      if (!suspectGrid) return;
+      const cards = Array.from(suspectGrid.querySelectorAll(".suspect-card"));
+      cards.sort((a, b) => {
+        const aliveA = parseInt(a.dataset.alive || "1", 10);
+        const aliveB = parseInt(b.dataset.alive || "1", 10);
+        if (aliveA !== aliveB) return aliveB - aliveA;
+        const scoreA = parseInt(a.dataset.score || "0", 10);
+        const scoreB = parseInt(b.dataset.score || "0", 10);
+        if (scoreA !== scoreB) return scoreB - scoreA;
+        const nameA = (a.querySelector(".name")?.textContent || "").toLowerCase();
+        const nameB = (b.querySelector(".name")?.textContent || "").toLowerCase();
+        if (nameA < nameB) return -1;
+        if (nameA > nameB) return 1;
+        return 0;
+      });
+      cards.forEach(card => suspectGrid.appendChild(card));
+    }
+
+    function updateSuspectStatus(data) {
+      if (!suspectGrid) return;
+      const card = suspectGrid.querySelector(`.suspect-card[data-char-id="${data.character_id}"]`);
+      if (!card) return;
+      const alive = !!data.is_alive;
+      card.dataset.alive = alive ? "1" : "0";
+      card.classList.toggle("dead", !alive);
+      const avatar = card.querySelector(".avatar");
+      if (avatar) {
+        const baseEmoji = avatar.dataset.emoji || avatar.textContent || "🪩";
+        avatar.textContent = alive ? baseEmoji : "👻";
+      }
+      if (typeof data.suspect_score === "number") {
+        const scoreEl = card.querySelector(".suspect-score");
+        if (scoreEl) scoreEl.textContent = data.suspect_score;
+        card.dataset.score = data.suspect_score;
+      }
+      const form = card.querySelector(".suspect-action-form");
+      const btn = form ? form.querySelector("button[type='submit']") : null;
+      const deadPill = card.querySelector(".dead-pill");
+      if (form) form.classList.toggle("hidden", !alive);
+      if (btn) btn.disabled = !alive || suspectRemaining > 0;
+      if (deadPill) deadPill.classList.toggle("hidden", alive);
+      reflowSuspects();
+      if (dmListEl) {
+        const dmRow = dmListEl.querySelector(`.dm-row-item[data-other-id="${data.character_id}"]`);
+        if (dmRow) {
+          const avatarEl = dmRow.querySelector(".avatar.small");
+          if (avatarEl) {
+            const base = dmRow.dataset.avatar || avatarEl.textContent || "🪩";
+            avatarEl.textContent = alive ? base : "👻";
+          }
+        }
+      }
+      if (currentDm === data.character_id && dmChatAvatar) {
+        const baseChat = dmChatAvatar.dataset.baseEmoji || dmChatAvatar.textContent || "🪩";
+        dmChatAvatar.textContent = alive ? baseChat : "👻";
+      }
+    }
+
     function updateDmRowFromMessage(msg, incrementUnread) {
       if (!dmListEl) return;
       const otherId = msg.sender_id === meId ? msg.recipient_id : msg.sender_id;
@@ -722,6 +830,19 @@
     socket.on("suspect_update", (data) => {
       const els = document.querySelectorAll(`[data-char-id="${data.character_id}"]`);
       els.forEach(el => el.textContent = data.suspect_score);
+      const card = suspectGrid ? suspectGrid.querySelector(`.suspect-card[data-char-id="${data.character_id}"]`) : null;
+      if (card) {
+        card.dataset.score = data.suspect_score;
+        reflowSuspects();
+      }
+    });
+    socket.on("character_status", (data) => {
+      updateSuspectStatus(data);
+    });
+    socket.on("phase_change", (data) => {
+      isPhaseTwo = !!(data && data.phase_two);
+      syncPhaseUi();
+      reflowSuspects();
     });
 
     if (suspectRemaining > 0) {
