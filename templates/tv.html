@@ -11,7 +11,35 @@
   <header class="topbar">
     <div class="title">🪩 80s Prom Mystery</div>
     <div class="subtitle">Character Board + Public Feed</div>
+    <aside class="jukebox-dock" id="jukebox-dock">
+    <div class="jukebox-card now-playing-card hidden" id="now-playing-card">
+      <div class="now-label">Now Playing</div>
+      <div class="now-content">
+        <div class="now-title" id="now-title">--</div>
+        <div class="now-meta marquee" id="now-meta"></div>
+      </div>
+    </div>
+    <div class="jukebox-middle hidden" id="jukebox-middle">
+      <button class="skip-icon" id="now-skip" type="button" aria-label="Skip song">⏭</button>
+      <svg class="progress-ring" viewBox="0 0 40 40" aria-hidden="true">
+        <circle class="progress-track" cx="20" cy="20" r="16"></circle>
+        <circle class="progress-value" id="now-progress-circle" cx="20" cy="20" r="16"></circle>
+      </svg>
+    </div>
+    <div class="jukebox-card up-next-card" id="up-next-card-0">
+      <div class="up-next-label">Up Next</div>
+      <div class="up-next-title" id="up-next-title-0">No songs queued</div>
+      <div class="up-next-meta marquee" id="up-next-meta-0"></div>
+    </div>
+    <div class="jukebox-card up-next-card hidden" id="up-next-card-1">
+      <div class="up-next-label">After That</div>
+      <div class="up-next-title" id="up-next-title-1">--</div>
+      <div class="up-next-meta marquee" id="up-next-meta-1"></div>
+    </div>
+    </aside>
   </header>
+
+  <audio id="jukebox-audio"></audio>
 
   <main class="tv-layout">
     <div class="grid-wrap">
@@ -80,6 +108,25 @@
   <script>
     const tvFeedEl = document.getElementById("tv-feed");
     const apiUrl = "{{ url_for('api_messages') }}";
+    const nowPlayingCard = document.getElementById("now-playing-card");
+    const jukeboxMiddle = document.getElementById("jukebox-middle");
+    const nowTitleEl = document.getElementById("now-title");
+    const nowMetaEl = document.getElementById("now-meta");
+    const jukeboxAudio = document.getElementById("jukebox-audio");
+    const nowProgressCircle = document.getElementById("now-progress-circle");
+    const nowSkipBtn = document.getElementById("now-skip");
+    const upNextCards = [
+      {
+        card: document.getElementById("up-next-card-0"),
+        title: document.getElementById("up-next-title-0"),
+        meta: document.getElementById("up-next-meta-0"),
+      },
+      {
+        card: document.getElementById("up-next-card-1"),
+        title: document.getElementById("up-next-title-1"),
+        meta: document.getElementById("up-next-meta-1"),
+      },
+    ];
 
     function renderFeed(data) {
       if (!tvFeedEl) return;
@@ -201,10 +248,149 @@
     socket.on("public_message", (msg) => addMessage(msg));
     socket.on("public_cleared", () => refreshFeed());
     socket.on("suspect_update", (data) => updateSuspect(data));
+    socket.on("jukebox_now", (data) => {
+      setNowPlaying(data);
+      fetchQueue();
+    });
+    socket.on("jukebox_stop", () => {
+      setNowPlaying(null);
+      fetchQueue();
+    });
+    socket.on("jukebox_queue", (data) => renderQueue(data));
 
     sortCards();
     refreshFeed();
     setInterval(refreshFeed, 15000);
+
+    async function fetchNowPlaying() {
+      try {
+        const res = await fetch("/api/jukebox/now");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.filename) {
+          setNowPlaying(data);
+        } else {
+          setNowPlaying(null);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function fetchQueue() {
+      try {
+        const res = await fetch("/api/jukebox/queue");
+        if (!res.ok) return;
+        const data = await res.json();
+        renderQueue(data);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    function renderQueue(list) {
+      upNextCards.forEach((slot, index) => {
+        if (!slot.card || !slot.title || !slot.meta) return;
+        const item = list && list[index];
+        if (item) {
+          slot.card.classList.remove("hidden");
+          slot.title.textContent = item.title || item.filename || "--";
+          setMarqueeText(slot.meta, `${item.artist || "Unknown"} · Requested by ${item.requester || "Unknown"}`);
+        } else if (index === 0) {
+          slot.card.classList.remove("hidden");
+          slot.title.textContent = "No songs queued";
+          setMarqueeText(slot.meta, "");
+        } else {
+          slot.card.classList.add("hidden");
+          slot.title.textContent = "";
+          setMarqueeText(slot.meta, "");
+        }
+      });
+    }
+
+    const circleRadius = 16;
+    const circleCircumference = 2 * Math.PI * circleRadius;
+    if (nowProgressCircle) {
+      nowProgressCircle.style.strokeDasharray = `${circleCircumference}`;
+      nowProgressCircle.style.strokeDashoffset = `${circleCircumference}`;
+    }
+
+    function setNowPlaying(data) {
+      if (!nowPlayingCard || !nowTitleEl || !nowMetaEl || !jukeboxAudio) return;
+      if (!data || !data.filename) {
+        nowPlayingCard.classList.add("hidden");
+        if (jukeboxMiddle) jukeboxMiddle.classList.add("hidden");
+        jukeboxAudio.pause();
+        jukeboxAudio.removeAttribute("src");
+        jukeboxAudio.load();
+        if (nowProgressCircle) nowProgressCircle.style.strokeDashoffset = `${circleCircumference}`;
+        setMarqueeText(nowMetaEl, "");
+        return;
+      }
+      nowTitleEl.textContent = data.title || data.filename;
+      setMarqueeText(nowMetaEl, `${data.artist || "Unknown"} · Requested by ${data.requester || "Unknown"}`);
+      nowPlayingCard.classList.remove("hidden");
+      if (jukeboxMiddle) jukeboxMiddle.classList.remove("hidden");
+      const encoded = encodeURIComponent(data.filename);
+      jukeboxAudio.src = `/static/jukebox/${encoded}`;
+      jukeboxAudio.dataset.queueId = data.queue_id;
+      jukeboxAudio.play().catch(() => {});
+    }
+
+    function updateProgress() {
+      if (!nowProgressCircle || !jukeboxAudio || !jukeboxAudio.duration) return;
+      const pct = Math.min(100, Math.max(0, (jukeboxAudio.currentTime / jukeboxAudio.duration) * 100));
+      const offset = circleCircumference * (1 - pct / 100);
+      nowProgressCircle.style.strokeDashoffset = `${offset}`;
+    }
+
+    function setMarqueeText(container, text) {
+      if (!container) return;
+      container.innerHTML = "";
+      if (!text) return;
+      const track = document.createElement("div");
+      track.className = "marquee-track";
+      const span1 = document.createElement("span");
+      span1.className = "marquee-text";
+      span1.textContent = `${text} · `;
+      const span2 = document.createElement("span");
+      span2.className = "marquee-text";
+      span2.textContent = `${text} · `;
+      track.appendChild(span1);
+      track.appendChild(span2);
+      container.appendChild(track);
+      requestAnimationFrame(() => {
+        const distance = track.scrollWidth / 2;
+        const speed = 35;
+        const duration = distance / speed;
+        track.style.animationDuration = `${duration}s`;
+      });
+    }
+
+    if (nowSkipBtn) {
+      nowSkipBtn.addEventListener("click", () => {
+        const queueId = parseInt(jukeboxAudio.dataset.queueId || "0", 10);
+        if (queueId) {
+          jukeboxAudio.pause();
+          setNowPlaying(null);
+          socket.emit("jukebox_skip", { queue_id: queueId });
+        }
+      });
+    }
+
+    jukeboxAudio.addEventListener("timeupdate", updateProgress);
+    jukeboxAudio.addEventListener("loadedmetadata", updateProgress);
+
+    jukeboxAudio.addEventListener("ended", () => {
+      const queueId = parseInt(jukeboxAudio.dataset.queueId || "0", 10);
+      if (queueId) {
+        setNowPlaying(null);
+        socket.emit("jukebox_finished", { queue_id: queueId });
+      }
+    });
+
+    fetchNowPlaying();
+    fetchQueue();
   </script>
 </body>
 </html>

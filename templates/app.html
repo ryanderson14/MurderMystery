@@ -51,6 +51,9 @@
         Suspect
         <span class="tab-clock {% if cooldown_remaining == 0 %}hidden{% endif %}" id="suspect-clock">⏱</span>
       </button>
+      <button class="tab-btn {% if (tab or 'feed') == 'jukebox' %}active{% endif %}" data-tab="jukebox">
+        Jukebox
+      </button>
     </div>
 
     <section class="panel tab-panel {% if (tab or 'feed') == 'feed' %}active{% endif %}" data-tab="feed">
@@ -212,6 +215,36 @@
                 </form>
               </div>
             {% endif %}
+          {% endfor %}
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="panel tab-panel {% if (tab or 'feed') == 'jukebox' %}active{% endif %}" data-tab="jukebox">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Jukebox</div>
+          <div class="panel-subtitle">Queue a track for the dance floor</div>
+        </div>
+      </div>
+      {% if not character %}
+        <p class="muted">Log in to queue songs.</p>
+      {% endif %}
+      {% if not songs %}
+        <div class="muted">No songs found yet. Add audio files to <code>static/jukebox</code>.</div>
+      {% else %}
+        <div class="jukebox-list">
+          {% for song in songs %}
+            <div class="jukebox-row">
+              <div class="jukebox-main">
+                <div class="jukebox-title">{{ song.title }}</div>
+                <div class="jukebox-artist">{{ song.artist }}</div>
+              </div>
+              <form action="{{ url_for('app_jukebox_queue') }}" method="post">
+                <input type="hidden" name="song_filename" value="{{ song.filename }}">
+                <button class="btn small" type="submit" {% if not character %}disabled{% endif %}>Queue</button>
+              </form>
+            </div>
           {% endfor %}
         </div>
       {% endif %}

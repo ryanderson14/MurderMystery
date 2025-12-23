@@ -8,6 +8,7 @@ from flask_socketio import SocketIO, join_room
 
 APP_DIR = Path(__file__).resolve().parent
 DB_PATH = APP_DIR / "mystery.db"
+JUKEBOX_DIR = APP_DIR / "static" / "jukebox"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
@@ -110,11 +111,28 @@ def ensure_accusations_table(conn):
     )
     """)
 
+def ensure_jukebox_table(conn):
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS jukebox_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        song_filename TEXT NOT NULL,
+        song_title TEXT NOT NULL,
+        song_artist TEXT NOT NULL,
+        requester_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        started_at DATETIME,
+        ended_at DATETIME,
+        FOREIGN KEY(requester_id) REFERENCES characters(id)
+    )
+    """)
+
 def init_db():
     conn = get_db()
     ensure_characters_table(conn)
     ensure_messages_table(conn)
     ensure_accusations_table(conn)
+    ensure_jukebox_table(conn)
     conn.commit()
     conn.close()
 
@@ -123,6 +141,7 @@ def reset_and_seed():
     cur = conn.cursor()
     cur.execute("DROP TABLE IF EXISTS messages")
     cur.execute("DROP TABLE IF EXISTS accusations")
+    cur.execute("DROP TABLE IF EXISTS jukebox_queue")
     cur.execute("DROP TABLE IF EXISTS characters")
     conn.commit()
     conn.close()
@@ -186,6 +205,88 @@ def serialize_public_message(row):
         "author": author,
         "avatar": avatar,
         "is_anonymous": bool(row["is_anonymous"]),
+    }
+
+def get_song_catalog():
+    if not JUKEBOX_DIR.exists():
+        return []
+    songs = []
+    for path in JUKEBOX_DIR.iterdir():
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in {".mp3", ".wav", ".ogg"}:
+            continue
+        stem = path.stem
+        if " - " in stem:
+            artist, title = stem.split(" - ", 1)
+        else:
+            artist = "Unknown"
+            title = stem
+        songs.append({
+            "filename": path.name,
+            "title": title.strip(),
+            "artist": artist.strip(),
+        })
+    songs.sort(key=lambda s: (s["artist"].lower(), s["title"].lower()))
+    return songs
+
+def get_current_playing(conn):
+    return conn.execute("""
+        SELECT q.*, c.name AS requester_name
+        FROM jukebox_queue q
+        LEFT JOIN characters c ON q.requester_id = c.id
+        WHERE q.status = 'playing'
+        ORDER BY q.started_at DESC, q.id DESC
+        LIMIT 1
+    """).fetchone()
+
+def ensure_now_playing(conn):
+    current = get_current_playing(conn)
+    if current:
+        return current
+    next_row = conn.execute("""
+        SELECT *
+        FROM jukebox_queue
+        WHERE status = 'queued'
+        ORDER BY requested_at ASC, id ASC
+        LIMIT 1
+    """).fetchone()
+    if not next_row:
+        return None
+    conn.execute("""
+        UPDATE jukebox_queue
+        SET status = 'playing', started_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (next_row["id"],))
+    conn.commit()
+    return get_current_playing(conn)
+
+def serialize_now_playing(row):
+    return {
+        "queue_id": row["id"],
+        "filename": row["song_filename"],
+        "title": row["song_title"],
+        "artist": row["song_artist"],
+        "requester": row["requester_name"] or "Unknown",
+    }
+
+def get_up_next(conn, limit=2):
+    rows = conn.execute("""
+        SELECT q.*, c.name AS requester_name
+        FROM jukebox_queue q
+        LEFT JOIN characters c ON q.requester_id = c.id
+        WHERE q.status = 'queued'
+        ORDER BY q.requested_at ASC, q.id ASC
+        LIMIT ?
+    """, (limit,)).fetchall()
+    return rows
+
+def serialize_queue_row(row):
+    return {
+        "queue_id": row["id"],
+        "title": row["song_title"],
+        "artist": row["song_artist"],
+        "requester": row["requester_name"] or "Unknown",
     }
 
 def build_dm_threads(conn, user_id, characters):
@@ -278,6 +379,22 @@ def api_messages():
     data = [serialize_public_message(m) for m in messages]
     return jsonify(data)
 
+@app.route("/api/jukebox/now")
+def api_jukebox_now():
+    conn = get_db()
+    now_playing = ensure_now_playing(conn)
+    conn.close()
+    if not now_playing:
+        return jsonify({})
+    return jsonify(serialize_now_playing(now_playing))
+
+@app.route("/api/jukebox/queue")
+def api_jukebox_queue():
+    conn = get_db()
+    rows = get_up_next(conn, limit=2)
+    conn.close()
+    return jsonify([serialize_queue_row(r) for r in rows])
+
 @app.route("/api/thread/<int:other_id>")
 def api_thread(other_id):
     character = get_logged_in_character()
@@ -319,6 +436,7 @@ def player_app():
         dm_threads = build_dm_threads(conn, character["id"], characters)
     conn.close()
     public_messages = fetch_public_messages()
+    songs = get_song_catalog()
     selected_dm = request.args.get("dm", type=int)
     error = request.args.get("error")
     tab = request.args.get("tab") or "feed"
@@ -378,6 +496,7 @@ def player_app():
         selected_dm_role=selected_dm_role,
         selected_dm_avatar=selected_dm_avatar,
         cooldown_remaining=cooldown_remaining,
+        songs=songs,
     )
 
 @app.route("/app/login", methods=["POST"])
@@ -435,6 +554,39 @@ def app_post():
     socketio.emit("public_message", payload)
 
     return redirect(url_for("player_app"))
+
+@app.route("/app/jukebox/queue", methods=["POST"])
+def app_jukebox_queue():
+    character = get_logged_in_character()
+    if not character:
+        return redirect(url_for("player_app", error="Log in to queue songs.", tab="jukebox"))
+
+    filename = (request.form.get("song_filename") or "").strip()
+    if not filename:
+        return redirect(url_for("player_app", error="Pick a song to queue.", tab="jukebox"))
+
+    songs = get_song_catalog()
+    selected = next((s for s in songs if s["filename"] == filename), None)
+    if not selected:
+        return redirect(url_for("player_app", error="Song not found.", tab="jukebox"))
+
+    conn = get_db()
+    current = get_current_playing(conn)
+    conn.execute("""
+        INSERT INTO jukebox_queue (song_filename, song_title, song_artist, requester_id, status)
+        VALUES (?, ?, ?, ?, 'queued')
+    """, (selected["filename"], selected["title"], selected["artist"], character["id"]))
+    conn.commit()
+    now_playing = None
+    if not current:
+        now_playing = ensure_now_playing(conn)
+    queue_rows = get_up_next(conn, limit=2)
+    conn.close()
+
+    if now_playing:
+        socketio.emit("jukebox_now", serialize_now_playing(now_playing))
+    socketio.emit("jukebox_queue", [serialize_queue_row(r) for r in queue_rows])
+    return redirect(url_for("player_app", tab="jukebox"))
 
 @app.route("/app/dm", methods=["POST"])
 def app_dm():
@@ -543,6 +695,8 @@ def gm_seed():
     for row in scores:
         socketio.emit("suspect_update", {"character_id": row["id"], "suspect_score": row["suspect_score"]})
     socketio.emit("public_cleared")
+    socketio.emit("jukebox_stop")
+    socketio.emit("jukebox_queue", [])
     return redirect(url_for("tv"))
 
 @app.route("/gm/clear_public")
@@ -562,6 +716,48 @@ def socket_join(data):
         return
     room = f"char-{char_id}"
     join_room(room)
+
+@socketio.on("jukebox_finished")
+def jukebox_finished(data):
+    queue_id = data.get("queue_id") if data else None
+    if not queue_id:
+        return
+    conn = get_db()
+    conn.execute("""
+        UPDATE jukebox_queue
+        SET status = 'played', ended_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status = 'playing'
+    """, (queue_id,))
+    conn.commit()
+    next_row = ensure_now_playing(conn)
+    queue_rows = get_up_next(conn, limit=2)
+    conn.close()
+    if next_row:
+        socketio.emit("jukebox_now", serialize_now_playing(next_row))
+    else:
+        socketio.emit("jukebox_stop")
+    socketio.emit("jukebox_queue", [serialize_queue_row(r) for r in queue_rows])
+
+@socketio.on("jukebox_skip")
+def jukebox_skip(data):
+    queue_id = data.get("queue_id") if data else None
+    if not queue_id:
+        return
+    conn = get_db()
+    conn.execute("""
+        UPDATE jukebox_queue
+        SET status = 'skipped', ended_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status = 'playing'
+    """, (queue_id,))
+    conn.commit()
+    next_row = ensure_now_playing(conn)
+    queue_rows = get_up_next(conn, limit=2)
+    conn.close()
+    if next_row:
+        socketio.emit("jukebox_now", serialize_now_playing(next_row))
+    else:
+        socketio.emit("jukebox_stop")
+    socketio.emit("jukebox_queue", [serialize_queue_row(r) for r in queue_rows])
 
 if __name__ == "__main__":
     init_db()
