@@ -13,6 +13,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 socketio = SocketIO(app, async_mode="eventlet", cors_allowed_origins="*")
 last_accuse_times = {}
+ACCUSE_COOLDOWN_SECONDS = 300
 
 # ---------- DB helpers ----------
 def get_db():
@@ -266,7 +267,7 @@ def home():
 @app.route("/tv")
 def tv():
     conn = get_db()
-    chars = conn.execute("SELECT * FROM characters ORDER BY id").fetchall()
+    chars = conn.execute("SELECT * FROM characters ORDER BY suspect_score DESC, id ASC").fetchall()
     conn.close()
     messages = fetch_public_messages()
     return render_template("tv.html", characters=chars, messages=messages)
@@ -321,6 +322,16 @@ def player_app():
     selected_dm = request.args.get("dm", type=int)
     error = request.args.get("error")
     tab = request.args.get("tab") or "feed"
+    cooldown_remaining = 0
+    if character:
+        now = time.time()
+        last_session = session.get("last_accuse_ts", 0)
+        last_memory = last_accuse_times.get(character["id"], 0)
+        last = max(last_session, last_memory)
+        if last > last_session:
+            session["last_accuse_ts"] = last
+        remaining = ACCUSE_COOLDOWN_SECONDS - (now - last)
+        cooldown_remaining = int(remaining) if remaining > 0 else 0
 
     if character and selected_dm is None:
         if dm_threads:
@@ -366,6 +377,7 @@ def player_app():
         selected_dm_name=selected_dm_name,
         selected_dm_role=selected_dm_role,
         selected_dm_avatar=selected_dm_avatar,
+        cooldown_remaining=cooldown_remaining,
     )
 
 @app.route("/app/login", methods=["POST"])
@@ -492,10 +504,15 @@ def app_accuse():
         return redirect(url_for("player_app", error="You cannot accuse yourself.", tab="suspect"))
 
     now = time.time()
-    last = last_accuse_times.get(character["id"], 0)
-    if now - last < 10:
-        return redirect(url_for("player_app", error="Slow down—wait a few seconds before accusing again.", tab="suspect"))
+    last_session = session.get("last_accuse_ts", 0)
+    last_memory = last_accuse_times.get(character["id"], 0)
+    last = max(last_session, last_memory)
+    if now - last < ACCUSE_COOLDOWN_SECONDS:
+        remaining = int(ACCUSE_COOLDOWN_SECONDS - (now - last))
+        session["last_accuse_ts"] = last
+        return redirect(url_for("player_app", error=f"Wait {remaining//60}:{remaining%60:02d} before accusing again.", tab="suspect"))
     last_accuse_times[character["id"]] = now
+    session["last_accuse_ts"] = now
 
     conn = get_db()
     exists = conn.execute("SELECT id FROM characters WHERE id = ?", (accused_id,)).fetchone()

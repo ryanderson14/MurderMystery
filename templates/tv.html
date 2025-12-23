@@ -21,14 +21,15 @@
       </div>
       <div class="grid">
         {% for c in characters %}
-          <section class="card {% if not c.is_alive %}dead{% endif %}">
+          <section class="card {% if not c.is_alive %}dead{% endif %}" data-char-id="{{ c.id }}" data-score="{{ c.suspect_score }}">
             <div class="avatar">{{ c.avatar_emoji }}</div>
             <div class="name">{{ c.name }}</div>
+            <div class="top-suspect-badge">🚨 Top Suspect</div>
             <div class="tag">{{ c.role_tag }}</div>
 
             <div class="suspect">
               <div class="suspect-label">Suspect</div>
-              <div class="suspect-value" data-char-id="{{ c.id }}">{{ c.suspect_score }}</div>
+              <div class="suspect-value">{{ c.suspect_score }}</div>
             </div>
 
             <div class="bio">{{ c.bio }}</div>
@@ -137,9 +138,63 @@
       }
     }
 
+    function updateTopSuspects() {
+      const cards = Array.from(document.querySelectorAll(".card"));
+      let maxScore = 0;
+      cards.forEach(card => {
+        const score = parseInt(card.dataset.score || "0", 10);
+        if (score > maxScore) maxScore = score;
+      });
+      cards.forEach(card => {
+        const score = parseInt(card.dataset.score || "0", 10);
+        const isTop = maxScore > 0 && score === maxScore;
+        card.classList.toggle("top-suspect", isTop);
+      });
+    }
+
+    function sortCards() {
+      const grid = document.querySelector(".grid");
+      if (!grid) return;
+      const cards = Array.from(grid.querySelectorAll(".card"));
+      const first = new Map();
+      cards.forEach(card => first.set(card, card.getBoundingClientRect()));
+
+      cards.sort((a, b) => {
+        const scoreA = parseInt(a.dataset.score || "0", 10);
+        const scoreB = parseInt(b.dataset.score || "0", 10);
+        if (scoreA !== scoreB) return scoreB - scoreA;
+        const idA = parseInt(a.dataset.charId || "0", 10);
+        const idB = parseInt(b.dataset.charId || "0", 10);
+        return idA - idB;
+      });
+      cards.forEach(card => grid.appendChild(card));
+
+      const last = new Map();
+      cards.forEach(card => last.set(card, card.getBoundingClientRect()));
+      cards.forEach(card => {
+        const firstBox = first.get(card);
+        const lastBox = last.get(card);
+        const dx = firstBox.left - lastBox.left;
+        const dy = firstBox.top - lastBox.top;
+        if (dx || dy) {
+          card.style.transform = `translate(${dx}px, ${dy}px)`;
+          card.style.transition = "transform 0s";
+          requestAnimationFrame(() => {
+            card.style.transform = "";
+            card.style.transition = "transform 520ms ease";
+          });
+        }
+      });
+      updateTopSuspects();
+    }
+
     function updateSuspect(data) {
-      const el = document.querySelector(`[data-char-id="${data.character_id}"]`);
-      if (el) el.textContent = data.suspect_score;
+      const card = document.querySelector(`.card[data-char-id="${data.character_id}"]`);
+      if (!card) return;
+      card.dataset.score = data.suspect_score;
+      const value = card.querySelector(".suspect-value");
+      if (value) value.textContent = data.suspect_score;
+      sortCards();
     }
 
     const socket = io();
@@ -147,6 +202,7 @@
     socket.on("public_cleared", () => refreshFeed());
     socket.on("suspect_update", (data) => updateSuspect(data));
 
+    sortCards();
     refreshFeed();
     setInterval(refreshFeed, 15000);
   </script>

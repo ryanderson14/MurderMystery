@@ -47,7 +47,10 @@
         DMs
         <span class="dm-badge {% if dm_unread_total == 0 %}hidden{% endif %}" id="dm-badge" data-count="{{ dm_unread_total }}">{{ dm_unread_total }}</span>
       </button>
-      <button class="tab-btn {% if (tab or 'feed') == 'suspect' %}active{% endif %}" data-tab="suspect" {% if not character %}disabled{% endif %}>Suspect</button>
+      <button class="tab-btn {% if (tab or 'feed') == 'suspect' %}active{% endif %}" id="suspect-tab" data-tab="suspect" {% if not character %}disabled{% endif %}>
+        Suspect
+        <span class="tab-clock {% if cooldown_remaining == 0 %}hidden{% endif %}" id="suspect-clock">⏱</span>
+      </button>
     </div>
 
     <section class="panel tab-panel {% if (tab or 'feed') == 'feed' %}active{% endif %}" data-tab="feed">
@@ -179,7 +182,7 @@
       {% endif %}
     </section>
 
-    <section class="panel tab-panel {% if (tab or 'feed') == 'suspect' %}active{% endif %}" data-tab="suspect">
+    <section class="panel tab-panel {% if (tab or 'feed') == 'suspect' %}active{% endif %}" data-tab="suspect" id="suspect-panel">
       <div class="panel-head">
         <div>
           <div class="panel-title">Suspect Board</div>
@@ -190,24 +193,25 @@
       {% if not character %}
         <p class="muted">Log in to accuse suspects.</p>
       {% else %}
-        <div class="suspect-grid app-suspect">
+        <div class="cooldown-row {% if cooldown_remaining == 0 %}hidden{% endif %}" id="suspect-cooldown" data-seconds="{{ cooldown_remaining }}">
+          Next accusation in <span id="suspect-timer">--:--</span>
+        </div>
+        <div class="suspect-grid app-suspect {% if cooldown_remaining > 0 %}cooldown{% endif %}">
           {% for c in characters %}
-            <div class="suspect-card">
-              <div class="avatar small">{{ c.avatar_emoji }}</div>
-              <div class="suspect-copy">
-                <div class="name">{{ c.name }}</div>
-                <div class="muted">{{ c.role_tag }}</div>
-              </div>
-              <div class="suspect-score" data-char-id="{{ c.id }}">{{ c.suspect_score }}</div>
-              {% if c.id == character.id %}
-                <button class="btn small" disabled>It's you</button>
-              {% else %}
+            {% if c.id != character.id %}
+              <div class="suspect-card">
+                <div class="avatar small">{{ c.avatar_emoji }}</div>
+                <div class="suspect-copy">
+                  <div class="name">{{ c.name }}</div>
+                  <div class="muted">{{ c.role_tag }}</div>
+                </div>
+                <div class="suspect-score" data-char-id="{{ c.id }}">{{ c.suspect_score }}</div>
                 <form action="{{ url_for('app_accuse') }}" method="post">
                   <input type="hidden" name="accused_id" value="{{ c.id }}">
-                  <button class="btn primary small" type="submit">Accuse +1</button>
+                  <button class="btn primary small" type="submit" {% if cooldown_remaining > 0 %}disabled{% endif %}>Accuse +1</button>
                 </form>
-              {% endif %}
-            </div>
+              </div>
+            {% endif %}
           {% endfor %}
         </div>
       {% endif %}
@@ -233,6 +237,13 @@
     const dmChatRole = document.getElementById("dm-chat-role");
     const dmChatAvatar = document.getElementById("dm-chat-avatar");
     let totalUnread = parseInt(dmBadge?.dataset.count || "0", 10);
+    const suspectCooldownEl = document.getElementById("suspect-cooldown");
+    const suspectTimerEl = document.getElementById("suspect-timer");
+    const suspectClockEl = document.getElementById("suspect-clock");
+    const suspectPanel = document.getElementById("suspect-panel");
+    const suspectButtons = suspectPanel ? suspectPanel.querySelectorAll("button[type='submit']") : [];
+    const suspectGrid = suspectPanel ? suspectPanel.querySelector(".suspect-grid") : null;
+    let suspectRemaining = parseInt(suspectCooldownEl?.dataset.seconds || "0", 10);
 
     if (activeTab !== "feed") {
       const btn = document.querySelector(`.tab-btn[data-tab="${activeTab}"]`);
@@ -424,6 +435,39 @@
       loadThread(currentDm);
     }
 
+    function formatTime(totalSeconds) {
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = Math.max(0, totalSeconds % 60);
+      return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+    }
+
+    function setSuspectEnabled(enabled) {
+      if (!suspectButtons) return;
+      suspectButtons.forEach(btn => {
+        btn.disabled = !enabled;
+      });
+      if (suspectGrid) {
+        suspectGrid.classList.toggle("cooldown", !enabled);
+      }
+      if (suspectClockEl) {
+        suspectClockEl.classList.toggle("hidden", enabled);
+      }
+      if (suspectCooldownEl) {
+        suspectCooldownEl.classList.toggle("hidden", enabled);
+      }
+    }
+
+    function tickSuspectCooldown() {
+      if (!suspectCooldownEl || !suspectTimerEl) return;
+      if (suspectRemaining <= 0) {
+        setSuspectEnabled(true);
+        return;
+      }
+      setSuspectEnabled(false);
+      suspectTimerEl.textContent = formatTime(suspectRemaining);
+      suspectRemaining -= 1;
+    }
+
     function updateDmRowFromMessage(msg, incrementUnread) {
       if (!dmListEl) return;
       const otherId = msg.sender_id === meId ? msg.recipient_id : msg.sender_id;
@@ -500,6 +544,13 @@
       const els = document.querySelectorAll(`[data-char-id="${data.character_id}"]`);
       els.forEach(el => el.textContent = data.suspect_score);
     });
+
+    if (suspectRemaining > 0) {
+      tickSuspectCooldown();
+      setInterval(tickSuspectCooldown, 1000);
+    } else if (suspectButtons.length) {
+      setSuspectEnabled(true);
+    }
 
     refreshFeed();
     setInterval(refreshFeed, 15000);
