@@ -51,6 +51,10 @@
         Suspect
         <span class="tab-clock {% if cooldown_remaining == 0 %}hidden{% endif %}" id="suspect-clock">⏱</span>
       </button>
+      <button class="tab-btn {% if (tab or 'feed') == 'wallet' %}active{% endif %}" data-tab="wallet" {% if not character %}disabled{% endif %}>
+        Wallet
+        <span class="dm-badge {% if wallet_pending_count == 0 %}hidden{% endif %}" id="wallet-badge" data-count="{{ wallet_pending_count }}">{{ wallet_pending_count }}</span>
+      </button>
       <button class="tab-btn {% if (tab or 'feed') == 'jukebox' %}active{% endif %}" data-tab="jukebox">
         Jukebox
       </button>
@@ -246,6 +250,91 @@
               </form>
             </div>
           {% endfor %}
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="panel tab-panel {% if (tab or 'feed') == 'wallet' %}active{% endif %}" data-tab="wallet">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Wallet</div>
+          <div class="panel-subtitle">Send or request cash from other players</div>
+        </div>
+      </div>
+      {% if not character %}
+        <p class="muted">Log in to manage your wallet.</p>
+      {% else %}
+        <div class="wallet-balance">
+          <div>
+            <div class="muted">Current Balance</div>
+            <div class="wallet-amount">${{ character.balance }}</div>
+          </div>
+          <div class="wallet-note">Transfers always require a double confirmation.</div>
+        </div>
+
+        {% if wallet_pending or wallet_notifications %}
+          <div class="wallet-requests">
+            <div class="panel-title">Notifications</div>
+            {% for note in wallet_notifications %}
+              <div class="wallet-request-row">
+                <div class="avatar small">{{ note.sender_avatar }}</div>
+                <div class="wallet-request-main">
+                  <div class="wallet-request-name">{{ note.sender_name }}</div>
+                  <div class="muted">sent you ${{ note.amount }}</div>
+                </div>
+                <form class="wallet-action" action="{{ url_for('app_wallet_notification_dismiss') }}" method="post">
+                  <input type="hidden" name="notification_id" value="{{ note.id }}">
+                  <button class="btn ghost small" type="submit">Dismiss</button>
+                </form>
+              </div>
+            {% endfor %}
+            {% for req in wallet_pending %}
+              <div class="wallet-request-row">
+                <div class="avatar small">{{ req.requester_avatar }}</div>
+                <div class="wallet-request-main">
+                  <div class="wallet-request-name">{{ req.requester_name }}</div>
+                  <div class="muted">is requesting ${{ req.amount }}</div>
+                </div>
+                <form class="wallet-action" action="{{ url_for('app_wallet_request_respond') }}" method="post" data-double-confirm data-confirm-mode="accept-send" data-requester="{{ req.requester_name }}" data-amount="{{ req.amount }}">
+                  <input type="hidden" name="request_id" value="{{ req.id }}">
+                  <input type="hidden" name="decision" value="accept">
+                  <button class="btn primary small" type="submit">Send</button>
+                </form>
+                <form class="wallet-action" action="{{ url_for('app_wallet_request_respond') }}" method="post">
+                  <input type="hidden" name="request_id" value="{{ req.id }}">
+                  <input type="hidden" name="decision" value="decline">
+                  <button class="btn ghost small" type="submit">Decline</button>
+                </form>
+              </div>
+            {% endfor %}
+          </div>
+          <hr class="divider" />
+        {% endif %}
+
+        <div class="wallet-card">
+          <div class="panel-title">Transfer Money</div>
+          <form class="wallet-form" id="wallet-transfer-form" method="post" data-double-confirm data-send-action="{{ url_for('app_wallet_send') }}" data-request-action="{{ url_for('app_wallet_request') }}">
+            <label class="form-label" for="wallet-transfer-type">Type</label>
+            <select id="wallet-transfer-type" name="transfer_type" required>
+              <option value="send" selected>Send</option>
+              <option value="request">Request</option>
+            </select>
+            <label class="form-label" for="wallet-transfer-target">Player</label>
+            <select id="wallet-transfer-target" name="target_id" required>
+              <option value="" disabled selected>Select a player</option>
+              {% for c in characters %}
+                {% if c.id != character.id %}
+                  <option value="{{ c.id }}">{{ c.name }} — {{ c.role_tag }}</option>
+                {% endif %}
+              {% endfor %}
+            </select>
+            <label class="form-label" for="wallet-transfer-amount">Amount</label>
+            <input id="wallet-transfer-amount" type="number" name="amount" min="1" step="1" placeholder="50" required />
+            <div class="actions">
+              <button class="btn" type="reset">Clear</button>
+              <button class="btn primary" type="submit" id="wallet-transfer-submit">Send</button>
+            </div>
+          </form>
         </div>
       {% endif %}
     </section>
@@ -541,6 +630,63 @@
         dmShell.classList.remove("chat-active");
       });
     }
+
+    function buildTransferMessage(form) {
+      const mode = form.dataset.confirmMode || "";
+      if (mode === "send") {
+        const amount = form.querySelector("input[name='amount']")?.value;
+        const target = form.querySelector("select[name='target_id']")?.selectedOptions?.[0]?.textContent || "that player";
+        return `Send $${amount || "0"} to ${target}?`;
+      }
+      if (mode === "request") {
+        const amount = form.querySelector("input[name='amount']")?.value;
+        const target = form.querySelector("select[name='target_id']")?.selectedOptions?.[0]?.textContent || "that player";
+        return `Request $${amount || "0"} from ${target}?`;
+      }
+      if (mode === "accept-send") {
+        const amount = form.dataset.amount || "0";
+        const requester = form.dataset.requester || "that player";
+        return `Send $${amount} to ${requester}?`;
+      }
+      return "Confirm this transfer?";
+    }
+
+    function attachDoubleConfirm() {
+      const forms = document.querySelectorAll("form[data-double-confirm]");
+      forms.forEach(form => {
+        form.addEventListener("submit", (event) => {
+          const first = buildTransferMessage(form);
+          const second = `Final check: ${first}`;
+          if (!confirm(first)) {
+            event.preventDefault();
+            return;
+          }
+          if (!confirm(second)) {
+            event.preventDefault();
+          }
+        });
+      });
+    }
+
+    const walletTransferForm = document.getElementById("wallet-transfer-form");
+    const walletTransferType = document.getElementById("wallet-transfer-type");
+    const walletTransferSubmit = document.getElementById("wallet-transfer-submit");
+
+    function syncWalletTransferForm() {
+      if (!walletTransferForm || !walletTransferType) return;
+      const isRequest = walletTransferType.value === "request";
+      walletTransferForm.action = isRequest ? walletTransferForm.dataset.requestAction : walletTransferForm.dataset.sendAction;
+      walletTransferForm.dataset.confirmMode = isRequest ? "request" : "send";
+      if (walletTransferSubmit) {
+        walletTransferSubmit.textContent = isRequest ? "Request" : "Send";
+      }
+    }
+
+    if (walletTransferType) {
+      walletTransferType.addEventListener("change", syncWalletTransferForm);
+    }
+    syncWalletTransferForm();
+    attachDoubleConfirm();
 
     const socket = io();
     socket.on("connect", () => {

@@ -36,9 +36,13 @@ def ensure_characters_table(conn):
         avatar_emoji TEXT NOT NULL,
         is_alive INTEGER NOT NULL DEFAULT 1,
         suspect_score INTEGER NOT NULL DEFAULT 0,
+        balance INTEGER NOT NULL DEFAULT 500,
         login_code TEXT NOT NULL UNIQUE
     )
     """)
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(characters)").fetchall()}
+    if "balance" not in cols:
+        conn.execute("ALTER TABLE characters ADD COLUMN balance INTEGER NOT NULL DEFAULT 500")
 
 def ensure_messages_table(conn):
     existing = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'").fetchone()
@@ -142,6 +146,39 @@ def ensure_photobooth_table(conn):
     )
     """)
 
+def ensure_wallet_requests_table(conn):
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS wallet_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        requester_id INTEGER NOT NULL,
+        target_id INTEGER NOT NULL,
+        amount INTEGER NOT NULL,
+        request_type TEXT NOT NULL DEFAULT 'request',
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        responded_at DATETIME,
+        FOREIGN KEY(requester_id) REFERENCES characters(id),
+        FOREIGN KEY(target_id) REFERENCES characters(id)
+    )
+    """)
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(wallet_requests)").fetchall()}
+    if "request_type" not in cols:
+        conn.execute("ALTER TABLE wallet_requests ADD COLUMN request_type TEXT NOT NULL DEFAULT 'request'")
+
+def ensure_wallet_notifications_table(conn):
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS wallet_notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender_id INTEGER NOT NULL,
+        recipient_id INTEGER NOT NULL,
+        amount INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'unread',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(sender_id) REFERENCES characters(id),
+        FOREIGN KEY(recipient_id) REFERENCES characters(id)
+    )
+    """)
+
 def init_db():
     conn = get_db()
     ensure_characters_table(conn)
@@ -149,6 +186,8 @@ def init_db():
     ensure_accusations_table(conn)
     ensure_jukebox_table(conn)
     ensure_photobooth_table(conn)
+    ensure_wallet_requests_table(conn)
+    ensure_wallet_notifications_table(conn)
     conn.commit()
     conn.close()
 
@@ -158,6 +197,8 @@ def reset_and_seed():
     cur.execute("DROP TABLE IF EXISTS messages")
     cur.execute("DROP TABLE IF EXISTS accusations")
     cur.execute("DROP TABLE IF EXISTS jukebox_queue")
+    cur.execute("DROP TABLE IF EXISTS wallet_requests")
+    cur.execute("DROP TABLE IF EXISTS wallet_notifications")
     # photostrips are preserved on reset
     cur.execute("DROP TABLE IF EXISTS characters")
     conn.commit()
@@ -166,23 +207,23 @@ def reset_and_seed():
     init_db()
 
     characters = [
-        # name, role_tag, bio, avatar_emoji, is_alive, suspect_score, login_code
-        ("Coach Walters",       "Baseball Coach",          "Authoritative and strong, not afraid of anyone.", "🧢", 1, 0, "COACH2"),
-        ("Dolly Dancer",        "Pompon Captain",          "Outgoing, pretty, popular, and a bit conniving.", "💃", 1, 0, "DOLLY1"),
-        ("Cindy Sensational",   "Class Sweetheart",        "Nice and pleasant, but can think and act on grudges.", "🌸", 1, 0, "CINDY5"),
-        ("Peter Prez",          "Class President",      "Go-getter who will stop at nothing to get what he wants.", "🏛️", 1, 0, "PETER9"),
-        ("Gabby Backer",        "Gossip",                  "Jealous and jaded, looks out for her own interests.", "🗣️", 1, 0, "GABBY6"),
-        ("Bobby Backer",        "Jock",                    "Confident, cocky, and used to people bending over backwards.", "🏋️", 1, 0, "BOBBY4"),
-        ("Clerical Katie",      "Class Secretary",      "Sweetheart to most, vindictive when crossed.", "📝", 1, 0, "KATIE3"),
-        ("Kevin Catcher",       "Baseball Player",         "Athletic, underestimated, and devoted to Cindy.", "⚾", 1, 0, "KEVIN8"),
-        ("Sally Spirit",        "Cheerleader",             "Popular and fun, but can make enemies through jealousy.", "📣", 1, 0, "SALLY7"),
+        # name, role_tag, bio, avatar_emoji, is_alive, suspect_score, balance, login_code
+        ("Coach Walters",       "Baseball Coach",          "Authoritative and strong, not afraid of anyone.", "🧢", 1, 0, 500, "COACH2"),
+        ("Dolly Dancer",        "Pompon Captain",          "Outgoing, pretty, popular, and a bit conniving.", "💃", 1, 0, 500, "DOLLY1"),
+        ("Cindy Sensational",   "Class Sweetheart",        "Nice and pleasant, but can think and act on grudges.", "🌸", 1, 0, 500, "CINDY5"),
+        ("Peter Prez",          "Class President",         "Go-getter who will stop at nothing to get what he wants.", "🏛️", 1, 0, 500, "PETER9"),
+        ("Gabby Backer",        "Gossip",                  "Jealous and jaded, looks out for her own interests.", "🗣️", 1, 0, 500, "GABBY6"),
+        ("Bobby Backer",        "Jock",                    "Confident, cocky, and used to people bending over backwards.", "🏋️", 1, 0, 500, "BOBBY4"),
+        ("Clerical Katie",      "Class Secretary",         "Sweetheart to most, vindictive when crossed.", "📝", 1, 0, 500, "KATIE3"),
+        ("Kevin Catcher",       "Baseball Player",         "Athletic, underestimated, and devoted to Cindy.", "⚾", 1, 0, 500, "KEVIN8"),
+        ("Sally Spirit",        "Cheerleader",             "Popular and fun, but can make enemies through jealousy.", "📣", 1, 0, 500, "SALLY7"),
     ]
 
     conn = get_db()
     cur = conn.cursor()
     cur.executemany("""
-        INSERT INTO characters (name, role_tag, bio, avatar_emoji, is_alive, suspect_score, login_code)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO characters (name, role_tag, bio, avatar_emoji, is_alive, suspect_score, balance, login_code)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, characters)
     conn.commit()
     conn.close()
@@ -223,6 +264,41 @@ def serialize_public_message(row):
         "avatar": avatar,
         "is_anonymous": bool(row["is_anonymous"]),
     }
+
+def parse_amount(raw_value):
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return value
+
+def settle_pending_sends(conn, target_id):
+    rows = conn.execute("""
+        SELECT * FROM wallet_requests
+        WHERE target_id = ? AND status = 'pending' AND request_type = 'send'
+    """, (target_id,)).fetchall()
+    for row in rows:
+        sender_balance = conn.execute("SELECT balance FROM characters WHERE id = ?", (row["requester_id"],)).fetchone()["balance"]
+        if row["amount"] > sender_balance:
+            conn.execute("""
+                UPDATE wallet_requests
+                SET status = 'declined', responded_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (row["id"],))
+            continue
+        conn.execute("UPDATE characters SET balance = balance - ? WHERE id = ?", (row["amount"], row["requester_id"]))
+        conn.execute("UPDATE characters SET balance = balance + ? WHERE id = ?", (row["amount"], target_id))
+        conn.execute("""
+            UPDATE wallet_requests
+            SET status = 'accepted', responded_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (row["id"],))
+        conn.execute("""
+            INSERT INTO wallet_notifications (sender_id, recipient_id, amount, status)
+            VALUES (?, ?, ?, 'unread')
+        """, (row["requester_id"], target_id, row["amount"]))
 
 def get_song_catalog():
     if not JUKEBOX_DIR.exists():
@@ -516,8 +592,28 @@ def player_app():
     conn = get_db()
     characters = conn.execute("SELECT * FROM characters ORDER BY id").fetchall()
     dm_threads = []
+    wallet_pending = []
+    wallet_notifications = []
+    wallet_pending_count = 0
     if character:
         dm_threads = build_dm_threads(conn, character["id"], characters)
+        settle_pending_sends(conn, character["id"])
+        conn.commit()
+        wallet_pending = conn.execute("""
+            SELECT r.*, c.name AS requester_name, c.avatar_emoji AS requester_avatar
+            FROM wallet_requests r
+            JOIN characters c ON r.requester_id = c.id
+            WHERE r.target_id = ? AND r.status = 'pending' AND r.request_type = 'request'
+            ORDER BY r.created_at DESC
+        """, (character["id"],)).fetchall()
+        wallet_notifications = conn.execute("""
+            SELECT n.*, c.name AS sender_name, c.avatar_emoji AS sender_avatar
+            FROM wallet_notifications n
+            JOIN characters c ON n.sender_id = c.id
+            WHERE n.recipient_id = ? AND n.status = 'unread'
+            ORDER BY n.created_at DESC
+        """, (character["id"],)).fetchall()
+        wallet_pending_count = len(wallet_pending) + len(wallet_notifications)
     conn.close()
     public_messages = fetch_public_messages()
     songs = get_song_catalog()
@@ -581,6 +677,9 @@ def player_app():
         selected_dm_avatar=selected_dm_avatar,
         cooldown_remaining=cooldown_remaining,
         songs=songs,
+        wallet_pending=wallet_pending,
+        wallet_notifications=wallet_notifications,
+        wallet_pending_count=wallet_pending_count,
     )
 
 @app.route("/photobooth")
@@ -675,6 +774,151 @@ def app_jukebox_queue():
         socketio.emit("jukebox_now", serialize_now_playing(now_playing))
     socketio.emit("jukebox_queue", [serialize_queue_row(r) for r in queue_rows])
     return redirect(url_for("player_app", tab="jukebox"))
+
+@app.route("/app/wallet/send", methods=["POST"])
+def app_wallet_send():
+    character = get_logged_in_character()
+    if not character:
+        return redirect(url_for("player_app", error="Log in to send money.", tab="wallet"))
+
+    target_id = request.form.get("target_id", type=int)
+    amount = parse_amount(request.form.get("amount"))
+
+    if not target_id:
+        return redirect(url_for("player_app", error="Pick someone to send money to.", tab="wallet"))
+    if target_id == character["id"]:
+        return redirect(url_for("player_app", error="You cannot send money to yourself.", tab="wallet"))
+    if not amount:
+        return redirect(url_for("player_app", error="Enter a valid amount.", tab="wallet"))
+
+    conn = get_db()
+    target = conn.execute("SELECT id FROM characters WHERE id = ?", (target_id,)).fetchone()
+    if not target:
+        conn.close()
+        return redirect(url_for("player_app", error="Recipient not found.", tab="wallet"))
+
+    balance = conn.execute("SELECT balance FROM characters WHERE id = ?", (character["id"],)).fetchone()["balance"]
+    if amount > balance:
+        conn.close()
+        return redirect(url_for("player_app", error="Not enough balance for that transfer.", tab="wallet"))
+
+    conn.execute("UPDATE characters SET balance = balance - ? WHERE id = ?", (amount, character["id"]))
+    conn.execute("UPDATE characters SET balance = balance + ? WHERE id = ?", (amount, target_id))
+    conn.execute("""
+        INSERT INTO wallet_notifications (sender_id, recipient_id, amount, status)
+        VALUES (?, ?, ?, 'unread')
+    """, (character["id"], target_id, amount))
+    conn.commit()
+    conn.close()
+    return redirect(url_for("player_app", tab="wallet"))
+
+@app.route("/app/wallet/request", methods=["POST"])
+def app_wallet_request():
+    character = get_logged_in_character()
+    if not character:
+        return redirect(url_for("player_app", error="Log in to request money.", tab="wallet"))
+
+    target_id = request.form.get("target_id", type=int)
+    amount = parse_amount(request.form.get("amount"))
+
+    if not target_id:
+        return redirect(url_for("player_app", error="Pick someone to request money from.", tab="wallet"))
+    if target_id == character["id"]:
+        return redirect(url_for("player_app", error="You cannot request money from yourself.", tab="wallet"))
+    if not amount:
+        return redirect(url_for("player_app", error="Enter a valid amount.", tab="wallet"))
+
+    conn = get_db()
+    target = conn.execute("SELECT id FROM characters WHERE id = ?", (target_id,)).fetchone()
+    if not target:
+        conn.close()
+        return redirect(url_for("player_app", error="Recipient not found.", tab="wallet"))
+
+    conn.execute("""
+        INSERT INTO wallet_requests (requester_id, target_id, amount, request_type, status)
+        VALUES (?, ?, ?, 'request', 'pending')
+    """, (character["id"], target_id, amount))
+    conn.commit()
+    conn.close()
+    return redirect(url_for("player_app", tab="wallet"))
+
+@app.route("/app/wallet/request/respond", methods=["POST"])
+def app_wallet_request_respond():
+    character = get_logged_in_character()
+    if not character:
+        return redirect(url_for("player_app", error="Log in to respond.", tab="wallet"))
+
+    request_id = request.form.get("request_id", type=int)
+    decision = (request.form.get("decision") or "").strip().lower()
+    if not request_id or decision not in {"accept", "decline"}:
+        return redirect(url_for("player_app", error="Invalid request response.", tab="wallet"))
+
+    conn = get_db()
+    row = conn.execute("""
+        SELECT * FROM wallet_requests
+        WHERE id = ? AND target_id = ?
+    """, (request_id, character["id"])).fetchone()
+    if not row or row["status"] != "pending":
+        conn.close()
+        return redirect(url_for("player_app", error="That request is no longer pending.", tab="wallet"))
+
+    if decision == "decline":
+        conn.execute("""
+            UPDATE wallet_requests
+            SET status = 'declined', responded_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (request_id,))
+        conn.commit()
+        conn.close()
+        return redirect(url_for("player_app", tab="wallet"))
+
+    amount = row["amount"]
+    if amount <= 0:
+        conn.close()
+        return redirect(url_for("player_app", error="Invalid request amount.", tab="wallet"))
+
+    balance = conn.execute("SELECT balance FROM characters WHERE id = ?", (character["id"],)).fetchone()["balance"]
+    if amount > balance:
+        conn.close()
+        return redirect(url_for("player_app", error="Not enough balance to send that amount.", tab="wallet"))
+    conn.execute("UPDATE characters SET balance = balance - ? WHERE id = ?", (amount, character["id"]))
+    conn.execute("UPDATE characters SET balance = balance + ? WHERE id = ?", (amount, row["requester_id"]))
+    conn.execute("""
+        UPDATE wallet_requests
+        SET status = 'accepted', responded_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (request_id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for("player_app", tab="wallet"))
+
+@app.route("/app/wallet/notification/dismiss", methods=["POST"])
+def app_wallet_notification_dismiss():
+    character = get_logged_in_character()
+    if not character:
+        return redirect(url_for("player_app", error="Log in to manage notifications.", tab="wallet"))
+
+    notification_id = request.form.get("notification_id", type=int)
+    if not notification_id:
+        return redirect(url_for("player_app", error="Notification not found.", tab="wallet"))
+
+    conn = get_db()
+    row = conn.execute("""
+        SELECT id FROM wallet_notifications
+        WHERE id = ? AND recipient_id = ?
+    """, (notification_id, character["id"])).fetchone()
+    if not row:
+        conn.close()
+        return redirect(url_for("player_app", error="Notification not found.", tab="wallet"))
+
+    conn.execute("""
+        UPDATE wallet_notifications
+        SET status = 'read'
+        WHERE id = ?
+    """, (notification_id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for("player_app", tab="wallet"))
 
 @app.route("/app/dm", methods=["POST"])
 def app_dm():
