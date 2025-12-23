@@ -9,8 +9,10 @@
 </head>
 <body class="tv">
   <header class="topbar">
-    <div class="title">🪩 80s Prom Mystery</div>
-    <div class="subtitle">Character Board + Public Feed</div>
+    <div class="topbar-text">
+      <div class="title">🪩 80s Prom Mystery</div>
+      <div class="subtitle">Character Board + Public Feed</div>
+    </div>
     <aside class="jukebox-dock" id="jukebox-dock">
     <div class="jukebox-card now-playing-card hidden" id="now-playing-card">
       <div class="now-label">Now Playing</div>
@@ -43,73 +45,41 @@
 
   <main class="tv-layout">
     {% set sorted_chars = characters|sort(attribute="suspect_score", reverse=True) %}
-    {% set top = sorted_chars[0] if sorted_chars else None %}
-    {% set others = sorted_chars[1:] if sorted_chars|length > 1 else [] %}
+    {% set top_score = sorted_chars[0].suspect_score if sorted_chars else None %}
 
-    <div class="grid-wrap">
-      <div class="character-board">
-        <div class="pinned-lane">
-          <div class="section-head">
-            <div class="section-title">Top Suspect</div>
-            <div class="section-subtitle">Highest score</div>
-          </div>
-          <div class="pinned-card-slot" id="pinned-card-slot">
-            {% if top %}
-              <section class="card {% if not top.is_alive %}dead{% endif %} top-suspect" data-char-id="{{ top.id }}" data-score="{{ top.suspect_score }}">
-                <div class="avatar">{{ top.avatar_emoji }}</div>
-                <div class="card-info">
-                  <div class="name">{{ top.name }}</div>
-                  <div class="tag">{{ top.role_tag }}</div>
-                </div>
-                <div class="suspect">
-                  <div class="suspect-label">Suspect</div>
-                  <div class="suspect-value">{{ top.suspect_score }}</div>
-                </div>
-                <div class="top-suspect-badge">🚨 Top Suspect</div>
-                {% if not top.is_alive %}
-                  <div class="death-overlay">💀 ELIMINATED 💀</div>
-                {% endif %}
-              </section>
-            {% endif %}
-          </div>
-        </div>
-
-        <div class="marquee-lane">
-          <div class="section-head">
-            <div class="section-title">Other Characters</div>
-            <div class="section-subtitle">Auto-scroll</div>
-          </div>
-          <div class="card-marquee-window vertical">
-            <div class="card-grid-track" id="card-grid-track">
-              {% for c in others %}
-                <section class="card {% if not c.is_alive %}dead{% endif %}" data-char-id="{{ c.id }}" data-score="{{ c.suspect_score }}">
-                  <div class="avatar">{{ c.avatar_emoji }}</div>
-                  <div class="card-info">
-                    <div class="name">{{ c.name }}</div>
-                    <div class="tag">{{ c.role_tag }}</div>
-                  </div>
-                  <div class="suspect">
-                    <div class="suspect-label">Suspect</div>
-                    <div class="suspect-value">{{ c.suspect_score }}</div>
-                  </div>
-                  <div class="top-suspect-badge">🚨 Top Suspect</div>
-                  {% if not c.is_alive %}
-                    <div class="death-overlay">💀 ELIMINATED 💀</div>
-                  {% endif %}
-                </section>
-              {% endfor %}
-            </div>
-          </div>
-        </div>
+    <section class="panel photo-panel">
+      <div class="panel-head">
+        <div class="panel-title">Photo Booth</div>
       </div>
+      <div class="photo-strip" id="photo-strip">
+        <div class="photo-strip-placeholder" id="photo-strip-placeholder">No photo strips yet.</div>
+      </div>
+    </section>
 
-      <section class="photo-strip-bar">
-        <div class="panel-title photo-strip-title">Photo Booth</div>
-        <div class="photo-strip" id="photo-strip">
-          <div class="photo-strip-placeholder" id="photo-strip-placeholder">No photo strips yet.</div>
-        </div>
-      </section>
-    </div>
+    <section class="panel board-panel">
+      <div class="panel-head">
+        <div class="panel-title">Character Board</div>
+      </div>
+      <div class="player-grid" id="player-grid">
+        {% for c in sorted_chars %}
+          <section class="player-card {% if not c.is_alive %}dead{% endif %} {% if top_score is not none and c.suspect_score == top_score %}top-suspect{% endif %}" data-char-id="{{ c.id }}" data-score="{{ c.suspect_score }}" data-role="{{ c.role_tag }}">
+            <div class="player-photo">
+              <img src="{{ url_for('static', filename='characters/' ~ c.id ~ '.jpg') }}" alt="{{ c.name }}" loading="lazy" decoding="async" />
+            </div>
+            <div class="player-text">
+              <div class="player-name">{{ c.name }}</div>
+              <div class="player-tag">{% if top_score is not none and c.suspect_score == top_score %}Top Suspect{% else %}{{ c.role_tag }}{% endif %}</div>
+            </div>
+            <div class="score-bubble">{{ c.suspect_score }}</div>
+            {% if not c.is_alive %}
+              <div class="death-overlay">💀 ELIMINATED 💀</div>
+            {% endif %}
+          </section>
+        {% else %}
+          <div class="muted">No characters yet.</div>
+        {% endfor %}
+      </div>
+    </section>
 
     <section class="panel feed-panel">
       <div class="panel-head">
@@ -230,47 +200,35 @@
       }
     }
 
-    const pinnedSlot = document.getElementById("pinned-card-slot");
-    const marqueeTrack = document.getElementById("card-grid-track");
-    let marqueeRaf = null;
-    let marqueeOffset = 0;
+    const playerGrid = document.getElementById("player-grid");
+    let showTopLabel = true;
 
-    function stopMarquee() {
-      if (marqueeRaf) cancelAnimationFrame(marqueeRaf);
-      marqueeRaf = null;
+    function getTopScore(cards) {
+      if (!cards.length) return null;
+      return cards.reduce((max, card) => {
+        const score = parseInt(card.dataset.score || "0", 10);
+        if (Number.isNaN(score)) return max;
+        return Math.max(max, score);
+      }, -Infinity);
     }
 
-    function startMarquee() {
-      stopMarquee();
-      if (!marqueeTrack) return;
-      const gap = parseFloat(getComputedStyle(marqueeTrack).gap || "0") || 0;
-      marqueeOffset = 0;
-      marqueeTrack.style.transform = "translateX(0)";
-      if (marqueeTrack.children.length <= 2) return;
-      let last = performance.now();
-      const speed = 28; // px per second
-      function step(now) {
-        const dt = (now - last) / 1000;
-        last = now;
-        marqueeOffset -= speed * dt;
-        const first = marqueeTrack.firstElementChild;
-        if (first) {
-          const width = first.getBoundingClientRect().width + gap;
-          if (-marqueeOffset >= width) {
-            marqueeOffset += width;
-            marqueeTrack.appendChild(first);
-          }
+    function updateTopLabels(cards, topScore) {
+      cards.forEach(card => {
+        const score = parseInt(card.dataset.score || "0", 10);
+        const isTop = topScore !== null && score === topScore;
+        card.classList.toggle("top-suspect", isTop);
+        const tag = card.querySelector(".player-tag");
+        if (tag) {
+          const role = card.dataset.role || "";
+          tag.textContent = isTop ? (showTopLabel ? "Top Suspect" : role) : role;
+          tag.classList.toggle("glimmer", isTop && showTopLabel);
         }
-        marqueeTrack.style.transform = `translateX(${marqueeOffset}px)`;
-        marqueeRaf = requestAnimationFrame(step);
-      }
-      marqueeRaf = requestAnimationFrame(step);
+      });
     }
 
     function reflowCards() {
-      if (!pinnedSlot || !marqueeTrack) return;
-      stopMarquee();
-      const cards = Array.from(document.querySelectorAll(".card[data-char-id]"));
+      if (!playerGrid) return;
+      const cards = Array.from(playerGrid.querySelectorAll(".player-card[data-char-id]"));
       cards.sort((a, b) => {
         const scoreA = parseInt(a.dataset.score || "0", 10);
         const scoreB = parseInt(b.dataset.score || "0", 10);
@@ -279,25 +237,24 @@
         const idB = parseInt(b.dataset.charId || "0", 10);
         return idA - idB;
       });
-      const top = cards.shift();
-      pinnedSlot.innerHTML = "";
-      if (top) {
-        top.classList.add("top-suspect");
-        pinnedSlot.appendChild(top);
-      }
-      marqueeTrack.innerHTML = "";
-      cards.forEach(card => {
-        card.classList.remove("top-suspect");
-        marqueeTrack.appendChild(card);
-      });
-      startMarquee();
+      const topScore = getTopScore(cards);
+      updateTopLabels(cards, topScore);
+      cards.forEach(card => playerGrid.appendChild(card));
+    }
+
+    function toggleTopLabel() {
+      if (!playerGrid) return;
+      showTopLabel = !showTopLabel;
+      const cards = Array.from(playerGrid.querySelectorAll(".player-card[data-char-id]"));
+      const topScore = getTopScore(cards);
+      updateTopLabels(cards, topScore);
     }
 
     function updateSuspect(data) {
-      const card = document.querySelector(`.card[data-char-id="${data.character_id}"]`);
+      const card = document.querySelector(`.player-card[data-char-id="${data.character_id}"]`);
       if (!card) return;
       card.dataset.score = data.suspect_score;
-      const value = card.querySelector(".suspect-value");
+      const value = card.querySelector(".score-bubble");
       if (value) value.textContent = data.suspect_score;
       reflowCards();
     }
@@ -323,6 +280,7 @@
     });
 
     reflowCards();
+    setInterval(toggleTopLabel, 5000);
     refreshFeed();
     setInterval(refreshFeed, 15000);
 
