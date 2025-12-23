@@ -167,15 +167,15 @@ def reset_and_seed():
 
     characters = [
         # name, role_tag, bio, avatar_emoji, is_alive, suspect_score, login_code
-        ("Alex Neon",      "Prom King Candidate", "Smooth talker with a perfect smile.", "😎", 1, 0, "ALEX9"),
-        ("Casey Cassette", "DJ",                  "Controls the music… and the rumors.", "🎧", 1, 0, "CASEY9"),
-        ("Jamie Jocks",    "Football Star",       "Popular, loud, and always in the spotlight.", "🏈", 1, 0, "JAMIE9"),
-        ("Morgan Makeup",  "Makeup Artist",       "Knows everyone’s secrets backstage.", "💄", 1, 0, "MORGN9"),
-        ("Riley Rebel",    "Punk Outsider",       "Doesn’t care about prom… or so they claim.", "🧷", 1, 0, "RILEY9"),
-        ("Taylor Tiara",   "Prom Queen Candidate","Perfect hair, perfect outfit, perfect alibi?", "👑", 1, 0, "TAYLR9"),
-        ("Sam Snapshot",   "Yearbook Photographer","Always watching. Always recording.", "📸", 1, 0, "SNAP9"),
-        ("Drew Detention", "Troublemaker",        "Has beef with half the school.", "🚬", 1, 0, "DREW9"),
-        ("Jordan Jetset",  "New Kid",             "Transferred mid-year. Mysterious past.", "🕶️", 1, 0, "JORD9"),
+        ("Coach Walters",       "Baseball Coach",          "Authoritative and strong, not afraid of anyone.", "🧢", 1, 0, "COACH2"),
+        ("Dolly Dancer",        "Pompon Captain",          "Outgoing, pretty, popular, and a bit conniving.", "💃", 1, 0, "DOLLY1"),
+        ("Cindy Sensational",   "Class Sweetheart",        "Nice and pleasant, but can think and act on grudges.", "🌸", 1, 0, "CINDY5"),
+        ("Peter Prez",          "Class President",      "Go-getter who will stop at nothing to get what he wants.", "🏛️", 1, 0, "PETER9"),
+        ("Gabby Backer",        "Gossip",                  "Jealous and jaded, looks out for her own interests.", "🗣️", 1, 0, "GABBY6"),
+        ("Bobby Backer",        "Jock",                    "Confident, cocky, and used to people bending over backwards.", "🏋️", 1, 0, "BOBBY4"),
+        ("Clerical Katie",      "Class Secretary",      "Sweetheart to most, vindictive when crossed.", "📝", 1, 0, "KATIE3"),
+        ("Kevin Catcher",       "Baseball Player",         "Athletic, underestimated, and devoted to Cindy.", "⚾", 1, 0, "KEVIN8"),
+        ("Sally Spirit",        "Cheerleader",             "Popular and fun, but can make enemies through jealousy.", "📣", 1, 0, "SALLY7"),
     ]
 
     conn = get_db()

@@ -64,7 +64,7 @@
         {% for c in sorted_chars %}
           <section class="player-card {% if not c.is_alive %}dead{% endif %} {% if top_score is not none and c.suspect_score == top_score %}top-suspect{% endif %}" data-char-id="{{ c.id }}" data-score="{{ c.suspect_score }}" data-role="{{ c.role_tag }}">
             <div class="player-photo">
-              <img src="{{ url_for('static', filename='characters/' ~ c.id ~ '.jpg') }}" alt="{{ c.name }}" loading="lazy" decoding="async" />
+              <img class="player-avatar" data-avatar-base="{{ url_for('static', filename='characters/' ~ c.id) }}" src="{{ url_for('static', filename='characters/' ~ c.id ~ '.jpg') }}" alt="{{ c.name }}" loading="lazy" decoding="async" />
             </div>
             <div class="player-text">
               <div class="player-name">{{ c.name }}</div>
@@ -142,6 +142,31 @@
     const photoStripPlaceholder = document.getElementById("photo-strip-placeholder");
     let photostrips = [];
     let photostripIndex = 0;
+
+    const avatarExts = [".jpg", ".png", ".gif"];
+
+    function applyAvatarFallbacks() {
+      const avatars = document.querySelectorAll(".player-avatar[data-avatar-base]");
+      avatars.forEach(img => {
+        const base = img.dataset.avatarBase;
+        if (!base) return;
+        let idx = avatarExts.findIndex(ext => img.src.endsWith(ext));
+        if (idx < 0) idx = 0;
+        const tryLoad = () => {
+          const ext = avatarExts[idx];
+          img.src = `${base}${ext}`;
+          img.onerror = () => {
+            idx += 1;
+            if (idx < avatarExts.length) {
+              tryLoad();
+            } else {
+              img.onerror = null;
+            }
+          };
+        };
+        tryLoad();
+      });
+    }
 
     function renderFeed(data) {
       if (!tvFeedEl) return;
@@ -280,6 +305,7 @@
     });
 
     reflowCards();
+    applyAvatarFallbacks();
     setInterval(toggleTopLabel, 5000);
     refreshFeed();
     setInterval(refreshFeed, 15000);
