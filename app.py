@@ -12,6 +12,7 @@ APP_DIR = Path(__file__).resolve().parent
 DB_PATH = APP_DIR / "mystery.db"
 JUKEBOX_DIR = APP_DIR / "static" / "jukebox"
 PHOTOBOOTH_DIR = APP_DIR / "static" / "photobooth"
+THRILLER_FILENAME = "Michael Jackson - Thriller.mp3"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
@@ -56,6 +57,7 @@ def ensure_messages_table(conn):
             body TEXT NOT NULL,
             is_anonymous INTEGER NOT NULL DEFAULT 0,
             is_read INTEGER NOT NULL DEFAULT 0,
+            pinned INTEGER NOT NULL DEFAULT 0,
             ts DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(sender_id) REFERENCES characters(id),
             FOREIGN KEY(recipient_id) REFERENCES characters(id)
@@ -64,6 +66,9 @@ def ensure_messages_table(conn):
         return
 
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(messages)").fetchall()}
+    if "pinned" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+
     required = {"id", "type", "sender_id", "recipient_id", "body", "is_anonymous", "is_read", "ts"}
     if required.issubset(cols):
         return
@@ -130,9 +135,13 @@ def ensure_jukebox_table(conn):
         requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         started_at DATETIME,
         ended_at DATETIME,
+        priority INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(requester_id) REFERENCES characters(id)
     )
     """)
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(jukebox_queue)").fetchall()}
+    if "priority" not in cols:
+        conn.execute("ALTER TABLE jukebox_queue ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
 
 def ensure_photobooth_table(conn):
     conn.execute("""
@@ -240,6 +249,16 @@ def get_logged_in_character():
         session.pop("character_id", None)
     return char
 
+def is_phase_two(conn=None):
+    owns_conn = False
+    if conn is None:
+        conn = get_db()
+        owns_conn = True
+    row = conn.execute("SELECT COUNT(*) AS cnt FROM characters WHERE is_alive = 0").fetchone()
+    if owns_conn:
+        conn.close()
+    return bool(row and row["cnt"] > 0)
+
 def fetch_public_messages(limit=50):
     conn = get_db()
     rows = conn.execute("""
@@ -247,15 +266,17 @@ def fetch_public_messages(limit=50):
         FROM messages m
         LEFT JOIN characters c ON m.sender_id = c.id
         WHERE m.type = 'public'
-        ORDER BY m.ts DESC
+        ORDER BY m.pinned DESC, m.ts DESC, m.id DESC
         LIMIT ?
     """, (limit,)).fetchall()
     conn.close()
     return rows
 
 def serialize_public_message(row):
-    author = "Anonymous" if row["is_anonymous"] else (row["sender_name"] or "Unknown")
-    avatar = "" if row["is_anonymous"] else (row["avatar_emoji"] or "")
+    system_author = "Naperville High"
+    system_avatar = "🏫"
+    author = "Anonymous" if row["is_anonymous"] else (row["sender_name"] or system_author)
+    avatar = "" if row["is_anonymous"] else (row["avatar_emoji"] or system_avatar)
     return {
         "id": row["id"],
         "body": row["body"],
@@ -263,6 +284,7 @@ def serialize_public_message(row):
         "author": author,
         "avatar": avatar,
         "is_anonymous": bool(row["is_anonymous"]),
+        "pinned": bool(row["pinned"]) if "pinned" in row.keys() else False,
     }
 
 def parse_amount(raw_value):
@@ -321,7 +343,7 @@ def get_song_catalog():
             "artist": artist.strip(),
         })
     songs.sort(key=lambda s: (s["artist"].lower(), s["title"].lower()))
-    return songs
+    return [s for s in songs if s["filename"] != THRILLER_FILENAME]
 
 def get_current_playing(conn):
     return conn.execute("""
@@ -341,7 +363,7 @@ def ensure_now_playing(conn):
         SELECT *
         FROM jukebox_queue
         WHERE status = 'queued'
-        ORDER BY requested_at ASC, id ASC
+        ORDER BY priority DESC, requested_at ASC, id ASC
         LIMIT 1
     """).fetchone()
     if not next_row:
@@ -369,10 +391,71 @@ def get_up_next(conn, limit=2):
         FROM jukebox_queue q
         LEFT JOIN characters c ON q.requester_id = c.id
         WHERE q.status = 'queued'
-        ORDER BY q.requested_at ASC, q.id ASC
+        ORDER BY q.priority DESC, q.requested_at ASC, q.id ASC
         LIMIT ?
     """, (limit,)).fetchall()
     return rows
+
+def enqueue_song(filename, requester_id, priority=0, conn=None):
+    owns_conn = False
+    if conn is None:
+        conn = get_db()
+        owns_conn = True
+    songs = get_song_catalog()
+    song = next((s for s in songs if s["filename"] == filename), None)
+    if not song:
+        if filename == THRILLER_FILENAME:
+            stem = Path(filename).stem
+            if " - " in stem:
+                artist, title = stem.split(" - ", 1)
+            else:
+                artist, title = "Unknown", stem
+            song = {"filename": filename, "title": title.strip(), "artist": artist.strip()}
+        else:
+            if owns_conn:
+                conn.close()
+            return None
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO jukebox_queue (song_filename, song_title, song_artist, requester_id, status, priority)
+        VALUES (?, ?, ?, ?, 'queued', ?)
+    """, (filename, song["title"], song["artist"], requester_id, priority))
+    conn.commit()
+    queue_id = cur.lastrowid
+    if owns_conn:
+        conn.close()
+    return queue_id
+
+def force_play_thriller(conn, requester_id):
+    # Prefer an existing queued/playing thriller, otherwise enqueue a fresh one with max priority.
+    row = conn.execute("""
+        SELECT *
+        FROM jukebox_queue
+        WHERE song_filename = ? AND status IN ('queued', 'playing')
+        ORDER BY priority DESC, requested_at DESC, id DESC
+        LIMIT 1
+    """, (THRILLER_FILENAME,)).fetchone()
+    if row:
+        target_id = row["id"]
+    else:
+        target_id = enqueue_song(THRILLER_FILENAME, requester_id=requester_id, priority=999, conn=conn)
+
+    current = get_current_playing(conn)
+    if current and current["id"] != target_id:
+        conn.execute("""
+            UPDATE jukebox_queue
+            SET status = 'skipped', ended_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'playing'
+        """, (current["id"],))
+
+    conn.execute("""
+        UPDATE jukebox_queue
+        SET status = 'playing', started_at = CURRENT_TIMESTAMP, priority = 999
+        WHERE id = ?
+    """, (target_id,))
+    conn.commit()
+    # Recalculate now playing row
+    return get_current_playing(conn)
 
 def serialize_queue_row(row):
     return {
@@ -511,10 +594,14 @@ def home():
 @app.route("/tv")
 def tv():
     conn = get_db()
-    chars = conn.execute("SELECT * FROM characters ORDER BY suspect_score DESC, id ASC").fetchall()
+    phase_two = is_phase_two(conn)
+    chars = conn.execute("""
+        SELECT * FROM characters
+        ORDER BY is_alive DESC, suspect_score DESC, id ASC
+    """).fetchall()
     conn.close()
     messages = fetch_public_messages()
-    return render_template("tv.html", characters=chars, messages=messages)
+    return render_template("tv.html", characters=chars, messages=messages, phase_two=phase_two)
 
 @app.route("/api/messages")
 def api_messages():
@@ -590,7 +677,18 @@ def api_thread_read(other_id):
 def player_app():
     character = get_logged_in_character()
     conn = get_db()
-    characters = conn.execute("SELECT * FROM characters ORDER BY id").fetchall()
+    phase_two = is_phase_two(conn)
+    characters = conn.execute("""
+        SELECT * FROM characters
+        ORDER BY is_alive DESC, suspect_score DESC, id ASC
+    """).fetchall()
+    queued_files = {
+        row["song_filename"]
+        for row in conn.execute("""
+            SELECT song_filename FROM jukebox_queue
+            WHERE status IN ('queued', 'playing')
+        """).fetchall()
+    }
     dm_threads = []
     wallet_pending = []
     wallet_notifications = []
@@ -617,6 +715,8 @@ def player_app():
     conn.close()
     public_messages = fetch_public_messages()
     songs = get_song_catalog()
+    for s in songs:
+        s["queued"] = s["filename"] in queued_files
     selected_dm = request.args.get("dm", type=int)
     error = request.args.get("error")
     tab = request.args.get("tab") or "feed"
@@ -680,6 +780,7 @@ def player_app():
         wallet_pending=wallet_pending,
         wallet_notifications=wallet_notifications,
         wallet_pending_count=wallet_pending_count,
+        phase_two=phase_two,
     )
 
 @app.route("/photobooth")
@@ -758,6 +859,14 @@ def app_jukebox_queue():
         return redirect(url_for("player_app", error="Song not found.", tab="jukebox"))
 
     conn = get_db()
+    exists = conn.execute("""
+        SELECT 1 FROM jukebox_queue
+        WHERE song_filename = ? AND status IN ('queued', 'playing')
+        LIMIT 1
+    """, (filename,)).fetchone()
+    if exists:
+        conn.close()
+        return redirect(url_for("player_app", error="That song is already queued or playing.", tab="jukebox"))
     current = get_current_playing(conn)
     conn.execute("""
         INSERT INTO jukebox_queue (song_filename, song_title, song_artist, requester_id, status)
@@ -981,6 +1090,9 @@ def app_accuse():
     if not character:
         return redirect(url_for("player_app", error="Log in first."))
 
+    if not is_phase_two():
+        return redirect(url_for("player_app", error="Suspecting unlocks after the first murder.", tab="feed"))
+
     accused_id = request.form.get("accused_id", type=int)
     if not accused_id:
         return redirect(url_for("player_app", error="Pick someone to accuse.", tab="suspect"))
@@ -999,10 +1111,13 @@ def app_accuse():
     session["last_accuse_ts"] = now
 
     conn = get_db()
-    exists = conn.execute("SELECT id FROM characters WHERE id = ?", (accused_id,)).fetchone()
-    if not exists:
+    target = conn.execute("SELECT id, is_alive FROM characters WHERE id = ?", (accused_id,)).fetchone()
+    if not target:
         conn.close()
         return redirect(url_for("player_app", error="That character doesn't exist.", tab="suspect"))
+    if not target["is_alive"]:
+        conn.close()
+        return redirect(url_for("player_app", error="You cannot accuse someone who's already dead.", tab="suspect"))
     cur = conn.cursor()
     cur.execute("INSERT INTO accusations (accuser_id, accused_id, points) VALUES (?, ?, 1)", (character["id"], accused_id))
     cur.execute("UPDATE characters SET suspect_score = suspect_score + 1 WHERE id = ?", (accused_id,))
@@ -1015,17 +1130,89 @@ def app_accuse():
 
 @app.route("/gm")
 def gm():
-    return render_template("gm.html")
+    conn = get_db()
+    characters = conn.execute("""
+        SELECT * FROM characters
+        ORDER BY is_alive DESC, name ASC
+    """).fetchall()
+    phase_two = is_phase_two(conn)
+    conn.close()
+    return render_template("gm.html", characters=characters, phase_two=phase_two)
+
+@app.route("/gm/kill", methods=["POST"])
+def gm_kill():
+    target_id = request.form.get("character_id", type=int)
+    action = (request.form.get("action") or "kill").strip().lower()
+    if not target_id:
+        return redirect(url_for("gm"))
+    conn = get_db()
+    before_phase = is_phase_two(conn)
+    row = conn.execute("SELECT id, is_alive, suspect_score, name FROM characters WHERE id = ?", (target_id,)).fetchone()
+    if not row:
+        conn.close()
+        return redirect(url_for("gm"))
+
+    if action == "revive":
+        conn.execute("UPDATE characters SET is_alive = 1 WHERE id = ?", (target_id,))
+    else:
+        conn.execute("UPDATE characters SET is_alive = 0, suspect_score = 0 WHERE id = ?", (target_id,))
+    conn.commit()
+    after_phase = is_phase_two(conn)
+    updated = conn.execute("SELECT id, suspect_score, is_alive FROM characters WHERE id = ?", (target_id,)).fetchone()
+    conn.close()
+
+    socketio.emit("character_status", {
+        "character_id": updated["id"],
+        "is_alive": bool(updated["is_alive"]),
+        "suspect_score": updated["suspect_score"],
+    })
+    socketio.emit("suspect_update", {"character_id": updated["id"], "suspect_score": updated["suspect_score"]})
+
+    if after_phase != before_phase:
+        socketio.emit("phase_change", {"phase_two": after_phase})
+
+    if action != "revive" and after_phase:
+        conn_alert = get_db()
+        conn_alert.execute("""
+            INSERT INTO messages (type, sender_id, recipient_id, body, is_anonymous, is_read, pinned)
+            VALUES ('public', NULL, NULL, ?, 0, 1, 1)
+        """, (f"{row['name']} has been murdered. Anyone could be a suspect now. Report suspicious behavior by accusing someone under 'Suspect' in your app.",))
+        conn_alert.commit()
+        murder_msg = conn_alert.execute("""
+            SELECT m.*, c.name AS sender_name, c.avatar_emoji
+            FROM messages m
+            LEFT JOIN characters c ON m.sender_id = c.id
+            WHERE m.id = (SELECT last_insert_rowid())
+        """).fetchone()
+        conn_alert.close()
+        if murder_msg:
+            socketio.emit("public_message", serialize_public_message(murder_msg))
+
+    trigger_thriller = action != "revive" and after_phase and not before_phase
+    if trigger_thriller:
+        conn2 = get_db()
+        now_playing = force_play_thriller(conn2, requester_id=target_id)
+        queue_rows = get_up_next(conn2, limit=2)
+        conn2.close()
+        if now_playing:
+            socketio.emit("jukebox_now", serialize_now_playing(now_playing))
+        else:
+            socketio.emit("jukebox_stop")
+        socketio.emit("jukebox_queue", [serialize_queue_row(r) for r in queue_rows])
+
+    return redirect(url_for("gm"))
 
 @app.route("/gm/seed")
 def gm_seed():
     reset_and_seed()
     last_accuse_times.clear()
     conn = get_db()
-    scores = conn.execute("SELECT id, suspect_score FROM characters").fetchall()
+    scores = conn.execute("SELECT id, suspect_score, is_alive FROM characters").fetchall()
     conn.close()
     for row in scores:
         socketio.emit("suspect_update", {"character_id": row["id"], "suspect_score": row["suspect_score"]})
+        socketio.emit("character_status", {"character_id": row["id"], "is_alive": True, "suspect_score": row["suspect_score"]})
+    socketio.emit("phase_change", {"phase_two": False})
     socketio.emit("public_cleared")
     socketio.emit("jukebox_stop")
     socketio.emit("jukebox_queue", [])
@@ -1038,6 +1225,16 @@ def gm_clear_public():
     conn.commit()
     conn.close()
     socketio.emit("public_cleared")
+    return redirect(url_for("gm"))
+
+@app.route("/gm/announce", methods=["POST"])
+def gm_announce():
+    text = (request.form.get("announcement") or "").strip()
+    if not text:
+        return redirect(url_for("gm"))
+    if len(text) > 280:
+        text = text[:280]
+    socketio.emit("announcement", {"body": text})
     return redirect(url_for("gm"))
 
 # ---------- Socket.IO ----------

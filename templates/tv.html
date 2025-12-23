@@ -7,11 +7,10 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js" crossorigin="anonymous"></script>
 </head>
-<body class="tv">
+<body class="tv {{ 'phase-two' if phase_two else 'phase-one' }}">
   <header class="topbar">
     <div class="topbar-text">
-      <div class="title">🪩 80s Prom Mystery</div>
-      <div class="subtitle">Character Board + Public Feed</div>
+      <div class="title">🪩 Naperville High Prom 1986</div>
     </div>
     <aside class="jukebox-dock" id="jukebox-dock">
     <div class="jukebox-card now-playing-card hidden" id="now-playing-card">
@@ -43,9 +42,20 @@
 
   <audio id="jukebox-audio"></audio>
 
+  <div class="announce-layer" id="announce-layer" aria-live="polite">
+    <div class="announce-dim"></div>
+    <div class="announce-content">
+      <img src="{{ url_for('static', filename='disco.gif') }}" data-fallback="{{ url_for('static', filename='disco.png') }}" alt="Disco ball" class="announce-ball" />
+      <div class="announce-glow"></div>
+      <div class="announce-text" id="announce-text"></div>
+    </div>
+  </div>
+
   <main class="tv-layout">
-    {% set sorted_chars = characters|sort(attribute="suspect_score", reverse=True) %}
-    {% set top_score = sorted_chars[0].suspect_score if sorted_chars else None %}
+    {% set sorted_chars = characters %}
+    {% set alive_chars = sorted_chars|selectattr("is_alive")|list %}
+    {% set top_score = (alive_chars|map(attribute="suspect_score")|max) if phase_two and alive_chars else None %}
+    {% if top_score is not none and top_score <= 0 %}{% set top_score = None %}{% endif %}
 
     <section class="panel photo-panel">
       <div class="panel-head">
@@ -58,22 +68,24 @@
 
     <section class="panel board-panel">
       <div class="panel-head">
-        <div class="panel-title">Character Board</div>
+        <div class="panel-title">{% if phase_two %}Suspect Board{% else %}Character Board{% endif %}</div>
       </div>
       <div class="player-grid" id="player-grid">
         {% for c in sorted_chars %}
-          <section class="player-card {% if not c.is_alive %}dead{% endif %} {% if top_score is not none and c.suspect_score == top_score %}top-suspect{% endif %}" data-char-id="{{ c.id }}" data-score="{{ c.suspect_score }}" data-role="{{ c.role_tag }}">
+          <section class="player-card {% if not c.is_alive %}dead{% endif %} {% if phase_two and top_score is not none and c.is_alive and c.suspect_score == top_score %}top-suspect{% endif %}" data-char-id="{{ c.id }}" data-score="{{ c.suspect_score }}" data-role="{{ c.role_tag }}" data-alive="{{ 1 if c.is_alive else 0 }}">
             <div class="player-photo">
               <img class="player-avatar" data-avatar-base="{{ url_for('static', filename='characters/' ~ c.id) }}" src="{{ url_for('static', filename='characters/' ~ c.id ~ '.jpg') }}" alt="{{ c.name }}" loading="lazy" decoding="async" />
+              <div class="blood-overlay"></div>
             </div>
             <div class="player-text">
               <div class="player-name">{{ c.name }}</div>
-              <div class="player-tag">{% if top_score is not none and c.suspect_score == top_score %}Top Suspect{% else %}{{ c.role_tag }}{% endif %}</div>
+              <div class="player-tag">{% if phase_two and top_score is not none and c.is_alive and c.suspect_score == top_score %}Top Suspect{% else %}{{ c.role_tag }}{% endif %}</div>
             </div>
-            <div class="score-bubble">{{ c.suspect_score }}</div>
-            {% if not c.is_alive %}
-              <div class="death-overlay">💀 ELIMINATED 💀</div>
-            {% endif %}
+            <div class="score-bubble">{% if c.is_alive %}{{ c.suspect_score }}{% else %}☠{% endif %}</div>
+            <div class="death-overlay {% if c.is_alive %}hidden{% endif %}">
+              <div class="death-ghost">👻</div>
+              <div class="death-text">Murdered</div>
+            </div>
           </section>
         {% else %}
           <div class="muted">No characters yet.</div>
@@ -91,7 +103,7 @@
       </div>
       <div class="message-list" id="tv-feed">
         {% for m in messages %}
-          <article class="message-card">
+          <article class="message-card {% if m.pinned %}pinned{% endif %}">
             <div class="message-meta">
               <div class="avatar small">
                 {% if m.is_anonymous %}👤{% else %}{{ m.avatar_emoji or "🪩" }}{% endif %}
@@ -104,6 +116,7 @@
               </div>
             </div>
             <div class="message-content">{{ m.body }}</div>
+            {% if m.pinned %}<div class="pin-label">📌 Pinned</div>{% endif %}
           </article>
         {% else %}
           <div class="muted">No messages yet.</div>
@@ -143,7 +156,14 @@
     let photostrips = [];
     let photostripIndex = 0;
 
+    const announceLayer = document.getElementById("announce-layer");
+    const announceText = document.getElementById("announce-text");
+    const announceBall = document.querySelector(".announce-ball");
+    let announceTimer = null;
+
     const avatarExts = [".jpg", ".png", ".gif"];
+    const bodyEl = document.body;
+    let isPhaseTwo = {{ "true" if phase_two else "false" }};
 
     function applyAvatarFallbacks() {
       const avatars = document.querySelectorAll(".player-avatar[data-avatar-base]");
@@ -175,9 +195,13 @@
         tvFeedEl.innerHTML = "<div class='muted'>No messages yet.</div>";
         return;
       }
+      data.sort((a, b) => {
+        if (a.pinned === b.pinned) return 0;
+        return a.pinned ? -1 : 1;
+      });
       data.forEach(msg => {
         const item = document.createElement("article");
-        item.className = "message-card";
+        item.className = "message-card" + (msg.pinned ? " pinned" : "");
         item.innerHTML = `
           <div class="message-meta">
             <div class="avatar small">${msg.is_anonymous ? "👤" : (msg.avatar || "🪩")}</div>
@@ -187,6 +211,7 @@
             </div>
           </div>
           <div class="message-content"></div>
+          ${msg.pinned ? '<div class="pin-label">📌 Pinned</div>' : ''}
         `;
         item.querySelector(".message-content").textContent = msg.body;
         tvFeedEl.appendChild(item);
@@ -207,7 +232,7 @@
     function addMessage(msg) {
       if (!tvFeedEl) return;
       const item = document.createElement("article");
-      item.className = "message-card";
+      item.className = "message-card" + (msg.pinned ? " pinned" : "");
       item.innerHTML = `
         <div class="message-meta">
           <div class="avatar small">${msg.is_anonymous ? "👤" : (msg.avatar || "🪩")}</div>
@@ -217,30 +242,46 @@
           </div>
         </div>
         <div class="message-content"></div>
+        ${msg.pinned ? '<div class="pin-label">📌 Pinned</div>' : ''}
       `;
       item.querySelector(".message-content").textContent = msg.body;
-      tvFeedEl.prepend(item);
+      if (msg.pinned) {
+        tvFeedEl.prepend(item);
+      } else {
+        const existingPinned = tvFeedEl.querySelector(".message-card.pinned");
+        if (existingPinned && existingPinned.nextSibling) {
+          existingPinned.parentNode.insertBefore(item, existingPinned.nextSibling);
+        } else {
+          tvFeedEl.prepend(item);
+        }
+      }
       while (tvFeedEl.children.length > 50) {
         tvFeedEl.removeChild(tvFeedEl.lastChild);
       }
     }
 
     const playerGrid = document.getElementById("player-grid");
-    let showTopLabel = true;
+    let showTopLabel = isPhaseTwo;
+    let topLabelTimer = null;
 
     function getTopScore(cards) {
-      if (!cards.length) return null;
-      return cards.reduce((max, card) => {
+      if (!isPhaseTwo || !cards.length) return null;
+      const aliveCards = cards.filter(card => (card.dataset.alive || "1") === "1");
+      if (!aliveCards.length) return null;
+      const maxScore = aliveCards.reduce((max, card) => {
         const score = parseInt(card.dataset.score || "0", 10);
         if (Number.isNaN(score)) return max;
         return Math.max(max, score);
       }, -Infinity);
+      if (maxScore <= 0) return null;
+      return maxScore;
     }
 
     function updateTopLabels(cards, topScore) {
       cards.forEach(card => {
         const score = parseInt(card.dataset.score || "0", 10);
-        const isTop = topScore !== null && score === topScore;
+        const alive = (card.dataset.alive || "1") === "1";
+        const isTop = isPhaseTwo && alive && topScore !== null && score === topScore;
         card.classList.toggle("top-suspect", isTop);
         const tag = card.querySelector(".player-tag");
         if (tag) {
@@ -255,9 +296,12 @@
       if (!playerGrid) return;
       const cards = Array.from(playerGrid.querySelectorAll(".player-card[data-char-id]"));
       cards.sort((a, b) => {
+        const aliveA = parseInt(a.dataset.alive || "1", 10);
+        const aliveB = parseInt(b.dataset.alive || "1", 10);
+        if (aliveA !== aliveB) return aliveB - aliveA;
         const scoreA = parseInt(a.dataset.score || "0", 10);
         const scoreB = parseInt(b.dataset.score || "0", 10);
-        if (scoreA !== scoreB) return scoreB - scoreA;
+        if (isPhaseTwo && scoreA !== scoreB) return scoreB - scoreA;
         const idA = parseInt(a.dataset.charId || "0", 10);
         const idB = parseInt(b.dataset.charId || "0", 10);
         return idA - idB;
@@ -268,7 +312,7 @@
     }
 
     function toggleTopLabel() {
-      if (!playerGrid) return;
+      if (!playerGrid || !isPhaseTwo) return;
       showTopLabel = !showTopLabel;
       const cards = Array.from(playerGrid.querySelectorAll(".player-card[data-char-id]"));
       const topScore = getTopScore(cards);
@@ -280,14 +324,79 @@
       if (!card) return;
       card.dataset.score = data.suspect_score;
       const value = card.querySelector(".score-bubble");
-      if (value) value.textContent = data.suspect_score;
+      if (value) {
+        const alive = (card.dataset.alive || "1") === "1";
+        value.textContent = alive ? data.suspect_score : "☠";
+      }
       reflowCards();
+    }
+
+    function updateCharacterStatus(data) {
+      const card = document.querySelector(`.player-card[data-char-id="${data.character_id}"]`);
+      if (!card) return;
+      const alive = !!data.is_alive;
+      card.dataset.alive = alive ? "1" : "0";
+      card.classList.toggle("dead", !alive);
+      const overlay = card.querySelector(".death-overlay");
+      if (overlay) overlay.classList.toggle("hidden", alive);
+      if (typeof data.suspect_score === "number") {
+        card.dataset.score = data.suspect_score;
+        const value = card.querySelector(".score-bubble");
+        if (value) value.textContent = alive ? data.suspect_score : "☠";
+      }
+      reflowCards();
+    }
+
+    function syncTopLabelTimer() {
+      if (isPhaseTwo && !topLabelTimer) {
+        topLabelTimer = setInterval(toggleTopLabel, 5000);
+      } else if (!isPhaseTwo && topLabelTimer) {
+        clearInterval(topLabelTimer);
+        topLabelTimer = null;
+      }
+    }
+
+    function setPhase(two) {
+      isPhaseTwo = !!two;
+      if (bodyEl) {
+        bodyEl.classList.toggle("phase-two", isPhaseTwo);
+        bodyEl.classList.toggle("phase-one", !isPhaseTwo);
+      }
+      showTopLabel = isPhaseTwo;
+      syncTopLabelTimer();
+      reflowCards();
+    }
+
+    function showAnnouncement(text) {
+      if (!announceLayer || !announceText) return;
+      announceText.textContent = text || "";
+      announceLayer.classList.add("active");
+      bodyEl?.classList.add("announce-dimmed");
+      if (announceTimer) clearTimeout(announceTimer);
+      announceTimer = setTimeout(() => {
+        announceLayer.classList.remove("active");
+        bodyEl?.classList.remove("announce-dimmed");
+      }, 30000);
+    }
+
+    if (announceBall) {
+      announceBall.addEventListener("error", () => {
+        const fallback = announceBall.dataset.fallback;
+        if (fallback && announceBall.src !== fallback) {
+          announceBall.src = fallback;
+        }
+      });
     }
 
     const socket = io();
     socket.on("public_message", (msg) => addMessage(msg));
     socket.on("public_cleared", () => refreshFeed());
     socket.on("suspect_update", (data) => updateSuspect(data));
+    socket.on("character_status", (data) => updateCharacterStatus(data));
+    socket.on("phase_change", (data) => setPhase(data && data.phase_two));
+    socket.on("announcement", (data) => {
+      if (data && data.body) showAnnouncement(data.body);
+    });
     socket.on("jukebox_now", (data) => {
       setNowPlaying(data);
       fetchQueue();
@@ -304,9 +413,8 @@
       renderPhotostrip();
     });
 
-    reflowCards();
+    setPhase(isPhaseTwo);
     applyAvatarFallbacks();
-    setInterval(toggleTopLabel, 5000);
     refreshFeed();
     setInterval(refreshFeed, 15000);
 
@@ -362,10 +470,13 @@
       if (photoStripPlaceholder) photoStripPlaceholder.classList.add("hidden");
       const strip = photostrips[photostripIndex % photostrips.length];
       strip.images.forEach(src => {
+        const frame = document.createElement("div");
+        frame.className = "photo-frame";
         const img = document.createElement("img");
         img.src = src;
         img.alt = "Photo strip";
-        photoStripEl.appendChild(img);
+        frame.appendChild(img);
+        photoStripEl.appendChild(frame);
       });
       photostripIndex += 1;
     }

@@ -6,7 +6,7 @@
   <title>GM Tools</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body class="gm">
+<body class="gm {{ 'phase-two' if phase_two else 'phase-one' }}">
   <div class="gm-wrap">
     <h1>GM Tools</h1>
     <p>Use this to reset and seed the 9 characters.</p>
@@ -16,6 +16,39 @@
     <p>Moderate the public feed (keeps DMs):</p>
     <a class="btn" href="/gm/clear_public">Clear Public Feed</a>
     <p class="hint">Then open <strong>/tv</strong> on the TV.</p>
+    <hr class="divider" />
+    <div class="gm-section">
+      <div class="panel-title">Announce to TV</div>
+      <form class="gm-announce-form" action="/gm/announce" method="post">
+        <label class="form-label" for="gm-announcement">Message</label>
+        <textarea id="gm-announcement" name="announcement" rows="3" maxlength="280" placeholder="Lights out in 5 minutes. Return to the dance floor." required></textarea>
+        <button class="btn primary" type="submit">Send Announcement</button>
+      </form>
+    </div>
+    <hr class="divider" />
+    <div class="gm-section">
+      <div class="panel-title">Eliminate / Revive</div>
+      <p class="hint">Killing someone queues Thriller immediately and unlocks suspect tools.</p>
+      <div class="gm-roster">
+        {% for c in characters %}
+          <div class="gm-row {% if not c.is_alive %}dead{% endif %}">
+            <div class="avatar small" data-emoji="{{ c.avatar_emoji }}">{{ c.avatar_emoji if c.is_alive else "👻" }}</div>
+            <div class="gm-row-main">
+              <div class="gm-row-name">{{ c.name }}</div>
+              <div class="gm-row-role">{{ c.role_tag }}</div>
+            </div>
+            <div class="gm-row-status">{% if c.is_alive %}Alive{% else %}Dead{% endif %}</div>
+            <form action="{{ url_for('gm_kill') }}" method="post">
+              <input type="hidden" name="character_id" value="{{ c.id }}">
+              <input type="hidden" name="action" value="{% if c.is_alive %}kill{% else %}revive{% endif %}">
+              <button class="btn {% if c.is_alive %}danger{% endif %}" type="submit">
+                {% if c.is_alive %}Kill Player{% else %}Revive{% endif %}
+              </button>
+            </form>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
   </div>
 </body>
 </html>
