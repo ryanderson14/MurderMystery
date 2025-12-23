@@ -1,6 +1,8 @@
 import os
 import sqlite3
 import time
+import base64
+import uuid
 from pathlib import Path
 
 from flask import Flask, render_template, redirect, url_for, request, session, jsonify, abort
@@ -9,6 +11,7 @@ from flask_socketio import SocketIO, join_room
 APP_DIR = Path(__file__).resolve().parent
 DB_PATH = APP_DIR / "mystery.db"
 JUKEBOX_DIR = APP_DIR / "static" / "jukebox"
+PHOTOBOOTH_DIR = APP_DIR / "static" / "photobooth"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
@@ -127,12 +130,25 @@ def ensure_jukebox_table(conn):
     )
     """)
 
+def ensure_photobooth_table(conn):
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS photostrips (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        img1 TEXT NOT NULL,
+        img2 TEXT NOT NULL,
+        img3 TEXT NOT NULL,
+        img4 TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
 def init_db():
     conn = get_db()
     ensure_characters_table(conn)
     ensure_messages_table(conn)
     ensure_accusations_table(conn)
     ensure_jukebox_table(conn)
+    ensure_photobooth_table(conn)
     conn.commit()
     conn.close()
 
@@ -142,6 +158,7 @@ def reset_and_seed():
     cur.execute("DROP TABLE IF EXISTS messages")
     cur.execute("DROP TABLE IF EXISTS accusations")
     cur.execute("DROP TABLE IF EXISTS jukebox_queue")
+    # photostrips are preserved on reset
     cur.execute("DROP TABLE IF EXISTS characters")
     conn.commit()
     conn.close()
@@ -289,6 +306,56 @@ def serialize_queue_row(row):
         "requester": row["requester_name"] or "Unknown",
     }
 
+def get_photostrips(limit=12):
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT * FROM photostrips
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+    """, (limit,)).fetchall()
+    conn.close()
+    strips = []
+    for row in rows:
+        strips.append({
+            "id": row["id"],
+            "images": [
+                f"/static/photobooth/{row['img1']}",
+                f"/static/photobooth/{row['img2']}",
+                f"/static/photobooth/{row['img3']}",
+                f"/static/photobooth/{row['img4']}",
+            ],
+            "created_at": row["created_at"],
+        })
+    return strips
+
+def save_photostrip(images):
+    PHOTOBOOTH_DIR.mkdir(parents=True, exist_ok=True)
+    filenames = []
+    for idx, data_url in enumerate(images):
+        if not data_url:
+            raise ValueError("Missing image data")
+        if "," in data_url:
+            _, payload = data_url.split(",", 1)
+        else:
+            payload = data_url
+        binary = base64.b64decode(payload)
+        filename = f"{uuid.uuid4().hex}_{idx+1}.jpg"
+        with open(PHOTOBOOTH_DIR / filename, "wb") as f:
+            f.write(binary)
+        filenames.append(filename)
+    conn = get_db()
+    conn.execute("""
+        INSERT INTO photostrips (img1, img2, img3, img4)
+        VALUES (?, ?, ?, ?)
+    """, (filenames[0], filenames[1], filenames[2], filenames[3]))
+    conn.commit()
+    strip_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+    conn.close()
+    return {
+        "id": strip_id,
+        "images": [f"/static/photobooth/{name}" for name in filenames],
+    }
+
 def build_dm_threads(conn, user_id, characters):
     threads = []
     for c in characters:
@@ -395,6 +462,23 @@ def api_jukebox_queue():
     conn.close()
     return jsonify([serialize_queue_row(r) for r in rows])
 
+@app.route("/api/photobooth/strips")
+def api_photobooth_strips():
+    return jsonify(get_photostrips())
+
+@app.route("/api/photobooth/upload", methods=["POST"])
+def api_photobooth_upload():
+    data = request.get_json(silent=True) or {}
+    images = data.get("images") or []
+    if len(images) != 4:
+        return jsonify({"error": "Expected 4 images"}), 400
+    try:
+        strip = save_photostrip(images)
+    except Exception:
+        return jsonify({"error": "Failed to save images"}), 400
+    socketio.emit("photobooth_new", strip)
+    return jsonify(strip)
+
 @app.route("/api/thread/<int:other_id>")
 def api_thread(other_id):
     character = get_logged_in_character()
@@ -498,6 +582,10 @@ def player_app():
         cooldown_remaining=cooldown_remaining,
         songs=songs,
     )
+
+@app.route("/photobooth")
+def photobooth():
+    return render_template("photobooth.html")
 
 @app.route("/app/login", methods=["POST"])
 def app_login():

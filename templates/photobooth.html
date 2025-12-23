@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Photo Booth</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="photobooth">
+  <div class="booth-shell">
+    <div class="booth-header">
+      <div>
+        <div class="booth-title">📸 Photo Booth</div>
+        <div class="booth-subtitle">Press start for a 4-shot strip.</div>
+      </div>
+      <button class="btn primary" id="start-btn">Start</button>
+    </div>
+
+    <div class="booth-stage">
+      <video id="booth-video" autoplay playsinline muted></video>
+      <div class="booth-overlay" id="booth-overlay"></div>
+      <div class="booth-flash" id="booth-flash"></div>
+    </div>
+
+    <div class="booth-status" id="booth-status">Ready.</div>
+    <div class="booth-strip" id="booth-strip"></div>
+  </div>
+
+  <script>
+    const video = document.getElementById("booth-video");
+    const startBtn = document.getElementById("start-btn");
+    const overlay = document.getElementById("booth-overlay");
+    const flash = document.getElementById("booth-flash");
+    const statusEl = document.getElementById("booth-status");
+    const stripEl = document.getElementById("booth-strip");
+    let stream = null;
+    let busy = false;
+
+    async function initCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+        video.srcObject = stream;
+      } catch (err) {
+        statusEl.textContent = "Camera not available. Please allow camera access.";
+      }
+    }
+
+    function delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function countdown(seconds) {
+      for (let i = seconds; i > 0; i--) {
+        overlay.textContent = i;
+        overlay.classList.add("show");
+        await delay(800);
+        overlay.classList.remove("show");
+        await delay(200);
+      }
+      overlay.textContent = "";
+    }
+
+    function flashScreen() {
+      flash.classList.add("show");
+      setTimeout(() => flash.classList.remove("show"), 200);
+    }
+
+    function captureFrame() {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || 1280;
+      canvas.height = video.videoHeight || 720;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/jpeg", 0.9);
+    }
+
+    function renderStrip(images) {
+      stripEl.innerHTML = "";
+      images.forEach(src => {
+        const img = document.createElement("img");
+        img.src = src;
+        stripEl.appendChild(img);
+      });
+    }
+
+    async function runBooth() {
+      if (busy) return;
+      busy = true;
+      startBtn.disabled = true;
+      statusEl.textContent = "Get ready...";
+      const shots = [];
+      for (let i = 0; i < 4; i++) {
+        await countdown(3);
+        flashScreen();
+        shots.push(captureFrame());
+        renderStrip(shots);
+        statusEl.textContent = `Shot ${i + 1} / 4 captured`;
+        await delay(700);
+      }
+      statusEl.textContent = "Uploading...";
+      try {
+        const res = await fetch("/api/photobooth/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ images: shots }),
+        });
+        if (!res.ok) throw new Error("Upload failed");
+        statusEl.textContent = "Uploaded! Ready for the next group.";
+      } catch (err) {
+        statusEl.textContent = "Upload failed. Check connection.";
+      }
+      busy = false;
+      startBtn.disabled = false;
+    }
+
+    startBtn.addEventListener("click", () => {
+      runBooth();
+    });
+
+    initCamera();
+  </script>
+</body>
+</html>
